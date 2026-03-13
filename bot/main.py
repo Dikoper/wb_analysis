@@ -46,7 +46,7 @@ async def send_daily_report(bot: Bot):
     logger.info("Генерация ежедневного отчёта...")
 
     try:
-        report_path = generate_report()
+        report_path = await asyncio.to_thread(generate_report)
         document = FSInputFile(report_path, filename=os.path.basename(report_path))
 
         await bot.send_document(

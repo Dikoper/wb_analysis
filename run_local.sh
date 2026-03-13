@@ -2,7 +2,7 @@
 # Локальный запуск бота без Docker
 
 # Активация venv
-source /Users/mask/Documents/ПРОЕКТЫ_2024/СОЮЗ_СНАБ_workRepo/knowledge_map_release_v2/ai-neuro/semantic_venv/bin/activate
+source "$(dirname "$0")/.venv/bin/activate"
 
 # Переход в директорию проекта
 cd "$(dirname "$0")"
