@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import sys
+from logging.handlers import TimedRotatingFileHandler
 
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -15,22 +16,29 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # Добавляем родительскую директорию для импорта
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.config import TELEGRAM_TOKEN, LOGS_DIR
+from bot.config import TELEGRAM_TOKEN, LOGS_DIR, REPORT_RETENTION_DAYS, LOG_RETENTION_DAYS
 from bot.handlers import register_routers
 from bot.handlers.feedback import cleanup_old_feedback
-from bot.db import init_db
+from bot.db import init_db, cleanup_old_reports
 from bot.scheduler import setup_scheduler
 
 # Создаём директорию для логов
 os.makedirs(LOGS_DIR, exist_ok=True)
 
-# Логирование в консоль и файл
+# Логирование в консоль и файл с ежедневной ротацией
+_log_handler = TimedRotatingFileHandler(
+    os.path.join(LOGS_DIR, 'bot.log'),
+    when='midnight',
+    interval=1,
+    backupCount=LOG_RETENTION_DAYS,
+    encoding='utf-8',
+)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(LOGS_DIR, 'bot.log'), encoding='utf-8')
+        _log_handler,
     ]
 )
 logger = logging.getLogger(__name__)
@@ -45,6 +53,9 @@ async def main():
     # Инициализация БД (создание таблиц + автомиграция токена из env)
     await init_db()
     cleanup_old_feedback()
+    deleted = await cleanup_old_reports(REPORT_RETENTION_DAYS)
+    if deleted:
+        logger.info(f"Удалено устаревших отчётов: {deleted}")
 
     # Инициализация бота и диспетчера
     bot = Bot(token=TELEGRAM_TOKEN)

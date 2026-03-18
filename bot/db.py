@@ -186,6 +186,28 @@ async def get_last_report(store_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+async def cleanup_old_reports(days: int) -> int:
+    """Удаляет отчёты старше days дней из БД и с диска. Возвращает кол-во удалённых."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            "SELECT id, file_path FROM report_history "
+            "WHERE created_at < datetime('now', ?)",
+            (f'-{days} days',)
+        )
+        rows = await cursor.fetchall()
+
+        deleted = 0
+        for row in rows:
+            if row['file_path'] and os.path.exists(row['file_path']):
+                os.remove(row['file_path'])
+            await db.execute('DELETE FROM report_history WHERE id = ?', (row['id'],))
+            deleted += 1
+
+        await db.commit()
+    return deleted
+
+
 # === Subscribers ===
 
 async def add_subscriber(chat_id: int):
