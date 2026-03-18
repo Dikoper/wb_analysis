@@ -15,7 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # Добавляем родительскую директорию для импорта
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.config import TELEGRAM_TOKEN, CHAT_ID, LOGS_DIR
+from bot.config import TELEGRAM_TOKEN, LOGS_DIR
 from bot.handlers import register_routers
 from bot.db import init_db
 from bot.scheduler import setup_scheduler
@@ -39,10 +39,6 @@ async def main():
     """Основная функция запуска бота."""
     if not TELEGRAM_TOKEN:
         logger.error("TELEGRAM_TOKEN не задан!")
-        sys.exit(1)
-
-    if not CHAT_ID:
-        logger.error("CHAT_ID не задан!")
         sys.exit(1)
 
     # Инициализация БД (создание таблиц + автомиграция токена из env)

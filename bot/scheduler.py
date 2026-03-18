@@ -12,8 +12,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 
-from bot.config import CHAT_ID, TIMEZONE
-from bot.db import get_stores, get_setting, save_report_history
+from bot.config import TIMEZONE
+from bot.db import get_stores, get_setting, save_report_history, get_subscribers
 from bot.report import generate_report
 from wb_api import WBTokenError
 
@@ -24,15 +24,20 @@ DEFAULT_REPORT_TIME = "09:00"
 
 async def send_daily_reports(bot: Bot):
     """
-    Генерирует и отправляет отчёты по всем активным магазинам.
+    Генерирует и отправляет отчёты по всем активным магазинам всем подписчикам.
     Вызывается планировщиком.
     """
+    subscribers = await get_subscribers()
+    if not subscribers:
+        logger.warning("Нет подписчиков для рассылки отчётов")
+        return
+
     stores = await get_stores()
     if not stores:
         logger.warning("Нет активных магазинов для отчёта")
         return
 
-    logger.info(f"Генерация отчётов для {len(stores)} магазинов...")
+    logger.info(f"Генерация отчётов для {len(stores)} магазинов, подписчиков: {len(subscribers)}")
 
     for store in stores:
         name = store.get('name') or f"Магазин #{store['id']}"
@@ -43,30 +48,33 @@ async def send_daily_reports(bot: Bot):
             await save_report_history(store['id'], report_path)
 
             document = FSInputFile(report_path, filename=os.path.basename(report_path))
-            await bot.send_document(
-                chat_id=CHAT_ID,
-                document=document,
-                caption=f"📊 Ежедневный отчёт: {name}"
-            )
-            logger.info(f"Отчёт для {name} отправлен")
+            for chat_id in subscribers:
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=document,
+                    caption=f"📊 Ежедневный отчёт: {name}"
+                )
+            logger.info(f"Отчёт для {name} отправлен {len(subscribers)} подписчикам")
 
         except WBTokenError as e:
-            await bot.send_message(
-                chat_id=CHAT_ID,
-                text=(
-                    f"🔑 <b>Ошибка токена: {name}</b>\n\n"
-                    f"{e}\n\n"
-                    "Обновите токен: /menu → ⚙️ Настройки → Магазины"
-                ),
-                parse_mode="HTML"
-            )
+            for chat_id in subscribers:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🔑 <b>Ошибка токена: {name}</b>\n\n"
+                        f"{e}\n\n"
+                        "Обновите токен: /menu → ⚙️ Настройки → Магазины"
+                    ),
+                    parse_mode="HTML"
+                )
             logger.error(f"Ошибка токена для {name}: {e}")
 
         except Exception as e:
-            await bot.send_message(
-                chat_id=CHAT_ID,
-                text=f"❌ Ошибка отчёта для {name}: {e}"
-            )
+            for chat_id in subscribers:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Ошибка отчёта для {name}: {e}"
+                )
             logger.error(f"Ошибка отчёта для {name}: {e}", exc_info=True)
 
 

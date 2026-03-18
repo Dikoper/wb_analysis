@@ -1,5 +1,5 @@
 """
-Модуль работы с SQLite: магазины, настройки, история отчётов.
+Модуль работы с SQLite: магазины, настройки, история отчётов, подписчики.
 """
 
 import os
@@ -39,6 +39,12 @@ async def init_db():
                 created_at TEXT DEFAULT (datetime('now'))
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS subscribers (
+                chat_id INTEGER PRIMARY KEY,
+                subscribed_at TEXT DEFAULT (datetime('now'))
+            )
+        ''')
         await db.commit()
 
     # Автомиграция: если stores пуста и WB_TOKEN есть в env — добавляем
@@ -55,6 +61,18 @@ async def init_db():
                 name = 'Магазин 1'
             await add_store(wb_token, name)
             logger.info(f"Автомиграция: магазин '{name}' добавлен")
+
+    # Автомиграция: если subscribers пуста и CHAT_ID есть в env — добавляем
+    chat_id_env = os.getenv('CHAT_ID')
+    if chat_id_env:
+        try:
+            chat_id = int(chat_id_env)
+            subs = await get_subscribers()
+            if not subs:
+                await add_subscriber(chat_id)
+                logger.info(f"Автомиграция: подписчик {chat_id} добавлен из CHAT_ID")
+        except (ValueError, Exception) as e:
+            logger.warning(f"Автомиграция CHAT_ID не удалась: {e}")
 
 
 # === Stores CRUD ===
@@ -166,3 +184,43 @@ async def get_last_report(store_id: int) -> dict | None:
         )
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+
+# === Subscribers ===
+
+async def add_subscriber(chat_id: int):
+    """Добавляет подписчика на ежедневные отчёты."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            'INSERT OR IGNORE INTO subscribers (chat_id) VALUES (?)',
+            (chat_id,)
+        )
+        await db.commit()
+
+
+async def remove_subscriber(chat_id: int):
+    """Удаляет подписчика."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            'DELETE FROM subscribers WHERE chat_id = ?',
+            (chat_id,)
+        )
+        await db.commit()
+
+
+async def get_subscribers() -> list[int]:
+    """Возвращает список chat_id всех подписчиков."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute('SELECT chat_id FROM subscribers')
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
+
+async def is_subscriber(chat_id: int) -> bool:
+    """Проверяет, подписан ли пользователь."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            'SELECT 1 FROM subscribers WHERE chat_id = ?',
+            (chat_id,)
+        )
+        return await cursor.fetchone() is not None

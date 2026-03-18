@@ -25,6 +25,10 @@ class NavCB(CallbackData, prefix="nav"):
     target: str  # "main", "analysis", "settings", "store_mgmt"
 
 
+class SubscribeCB(CallbackData, prefix="sub"):
+    action: str  # "toggle"
+
+
 # === Keyboard Builders ===
 
 def main_menu_kb() -> InlineKeyboardMarkup:
@@ -91,8 +95,9 @@ def store_actions_kb(store_id: int, last_report_time: str = None) -> InlineKeybo
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def settings_kb(current_time: str = "09:00") -> InlineKeyboardMarkup:
+def settings_kb(current_time: str = "09:00", is_subscribed: bool = False) -> InlineKeyboardMarkup:
     """Меню настроек."""
+    subscribe_text = "🔕 Отписаться от рассылки" if is_subscribed else "🔔 Подписаться на рассылку"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text=f"🕐 Время отчётов: {current_time}",
@@ -101,6 +106,10 @@ def settings_kb(current_time: str = "09:00") -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             text="🏪 Управление магазинами",
             callback_data=SettingsCB(action="stores").pack()
+        )],
+        [InlineKeyboardButton(
+            text=subscribe_text,
+            callback_data=SubscribeCB(action="toggle").pack()
         )],
         [InlineKeyboardButton(
             text="← Назад",

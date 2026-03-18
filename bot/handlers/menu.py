@@ -9,7 +9,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 
 from bot.keyboards import MenuCB, NavCB, main_menu_kb
-from bot.db import get_stores
+from bot.db import get_stores, is_subscriber
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,14 @@ async def _send_main_menu(target, stores: list = None):
     """Отправляет или редактирует главное меню с информацией."""
     if stores is None:
         stores = await get_stores()
+
+    if isinstance(target, Message):
+        chat_id = target.chat.id
+    else:
+        chat_id = target.message.chat.id
+
+    subscribed = await is_subscriber(chat_id)
+    sub_status = "🔔 Рассылка подключена" if subscribed else "🔕 Рассылка отключена"
 
     text = (
         "📊 <b>WB Analiz Bot</b>\n\n"
@@ -32,7 +40,7 @@ async def _send_main_menu(target, stores: list = None):
     if not stores:
         text += "  ⚠️ Нет подключённых магазинов\n"
 
-    text += "\nВыберите действие:"
+    text += f"\n{sub_status}\n\nВыберите действие:"
 
     if isinstance(target, Message):
         await target.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
