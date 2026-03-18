@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from bot.config import TELEGRAM_TOKEN, LOGS_DIR
 from bot.handlers import register_routers
+from bot.handlers.feedback import cleanup_old_feedback
 from bot.db import init_db
 from bot.scheduler import setup_scheduler
 
@@ -43,6 +44,7 @@ async def main():
 
     # Инициализация БД (создание таблиц + автомиграция токена из env)
     await init_db()
+    cleanup_old_feedback()
 
     # Инициализация бота и диспетчера
     bot = Bot(token=TELEGRAM_TOKEN)

@@ -17,6 +17,9 @@ LOGS_DIR = os.getenv('LOGS_DIR', '/app/logs')
 REPORT_TIME = "09:00"  # МСК
 TIMEZONE = "Europe/Moscow"
 
+# Фидбек
+FEEDBACK_RETENTION_MONTHS = int(os.getenv('FEEDBACK_RETENTION_MONTHS', '3'))
+
 # Пороги для групп товаров (шт/день)
 THRESHOLD_A = 4.0   # A: ≥4 (ходовые)
 THRESHOLD_B = 0.5   # B: ≥0.5, C: <0.5 (редкие)

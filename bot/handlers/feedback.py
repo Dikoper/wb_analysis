@@ -4,25 +4,50 @@
 
 import os
 import csv
+import logging
 from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.types import Message
 
-from bot.config import FEEDBACK_DIR
+from bot.config import FEEDBACK_DIR, FEEDBACK_RETENTION_MONTHS
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
 FEEDBACK_EMOJIS = {'👍', '👎', '🤷'}
 
 
+def _feedback_filename() -> str:
+    """Имя файла для текущего месяца: feedback_2026_03.csv"""
+    return os.path.join(FEEDBACK_DIR, datetime.now().strftime('feedback_%Y_%m.csv'))
+
+
+def cleanup_old_feedback():
+    """Удаляет файлы фидбека старше FEEDBACK_RETENTION_MONTHS месяцев."""
+    if not os.path.isdir(FEEDBACK_DIR):
+        return
+    now = datetime.now()
+    for fname in os.listdir(FEEDBACK_DIR):
+        if not fname.startswith('feedback_') or not fname.endswith('.csv'):
+            continue
+        try:
+            parts = fname[len('feedback_'):-len('.csv')].split('_')
+            file_date = datetime(int(parts[0]), int(parts[1]), 1)
+        except (ValueError, IndexError):
+            continue
+        months_old = (now.year - file_date.year) * 12 + (now.month - file_date.month)
+        if months_old >= FEEDBACK_RETENTION_MONTHS:
+            os.remove(os.path.join(FEEDBACK_DIR, fname))
+            logger.info(f"Удалён устаревший файл фидбека: {fname}")
+
+
 def save_feedback(emoji: str = '', comment: str = ''):
-    """Сохраняет фидбек в CSV файл."""
+    """Сохраняет фидбек в файл текущего месяца."""
     os.makedirs(FEEDBACK_DIR, exist_ok=True)
-    feedback_file = os.path.join(FEEDBACK_DIR, 'feedback.csv')
-
+    feedback_file = _feedback_filename()
     file_exists = os.path.exists(feedback_file)
-
     with open(feedback_file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         if not file_exists:
