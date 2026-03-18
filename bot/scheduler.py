@@ -65,12 +65,18 @@ async def send_daily_reports(bot: Bot):
     for chat_id in subscribers:
         await bot.send_message(chat_id, header, parse_mode="HTML")
 
+    # Параметры расчёта (один раз для всех магазинов)
+    days_threshold = int(await get_setting('calc_days_threshold', '7'))
+    threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
+    threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
+
     # Отчёт по каждому магазину
     for store in stores:
         name = store_display_name(store)
         try:
             report_path = await asyncio.to_thread(
-                generate_report, token=store['token'], store_name=name
+                generate_report, token=store['token'], store_name=name,
+                days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
             )
             await save_report_history(store['id'], report_path)
 

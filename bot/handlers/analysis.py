@@ -16,7 +16,7 @@ from bot.keyboards import (
     MenuCB, StoreCB, NavCB,
     stores_list_kb, store_actions_kb, store_display_name,
 )
-from bot.db import get_stores, get_store, get_last_report, save_report_history
+from bot.db import get_stores, get_store, get_last_report, save_report_history, get_setting
 from bot.report import generate_report
 from wb_api import WBTokenError
 
@@ -112,8 +112,12 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
     await callback.answer()
 
     try:
+        days_threshold = int(await get_setting('calc_days_threshold', '7'))
+        threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
+        threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
         report_path = await asyncio.to_thread(
-            generate_report, token=store['token'], store_name=name
+            generate_report, token=store['token'], store_name=name,
+            days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
         )
         await save_report_history(callback_data.store_id, report_path)
 

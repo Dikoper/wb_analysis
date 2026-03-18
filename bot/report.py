@@ -31,17 +31,17 @@ from wb_api import get_orders, get_stocks, merge_orders_stocks, calc_avg_per_day
 from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
 
 
-def assign_group(avg_per_day: float) -> str:
+def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold_b: float = THRESHOLD_B) -> str:
     """
     Определяет группу товара по средним продажам в день.
 
-    A: ≥4 шт/день (ходовые) — анализ за 7 дней
-    B: ≥0.5 шт/день — анализ за 14 дней
-    C: <0.5 шт/день (редкие) — анализ за 30 дней
+    A: ≥threshold_a шт/день (ходовые) — анализ за 7 дней
+    B: ≥threshold_b шт/день — анализ за 14 дней
+    C: <threshold_b шт/день (редкие) — анализ за 30 дней
     """
-    if avg_per_day >= THRESHOLD_A:
+    if avg_per_day >= threshold_a:
         return 'A'
-    elif avg_per_day >= THRESHOLD_B:
+    elif avg_per_day >= threshold_b:
         return 'B'
     else:
         return 'C'
@@ -75,12 +75,12 @@ def calc_days_remaining(row) -> float:
     return row['stock_qty'] / row['avg_per_day']
 
 
-def get_price_increase(days_remaining: float) -> int:
+def get_price_increase(days_remaining: float, days_threshold: int = 7) -> int:
     """
     Возвращает % повышения цены по шкале.
 
     Шкала:
-    - > 7 дней: 0%
+    - > days_threshold дней: 0%
     - 6-7 дней: 5%
     - 5-6 дней: 10%
     - 4-5 дней: 15%
@@ -89,7 +89,7 @@ def get_price_increase(days_remaining: float) -> int:
     - 1-2 дней: 40%
     - < 1 дня: 50%
     """
-    if days_remaining is None or days_remaining > 7:
+    if days_remaining is None or days_remaining > days_threshold:
         return 0
     elif days_remaining >= 6:
         return 5
@@ -143,13 +143,22 @@ def format_worksheet(ws, column_widths: dict):
         ws.column_dimensions[get_column_letter(col_num)].width = width
 
 
-def generate_report(token: str = None, store_name: str = None) -> str:
+def generate_report(
+    token: str = None,
+    store_name: str = None,
+    days_threshold: int = 7,
+    threshold_a: float = THRESHOLD_A,
+    threshold_b: float = THRESHOLD_B,
+) -> str:
     """
     Генерирует Excel-отчёт с рекомендациями по ценам.
 
     Args:
         token: токен WB API (если None — из переменной окружения)
         store_name: имя магазина для имени файла
+        days_threshold: порог дней остатка для шкалы повышения цены
+        threshold_a: мин. продаж/день для группы A
+        threshold_b: мин. продаж/день для группы B
 
     Returns:
         Путь к сгенерированному файлу
@@ -190,7 +199,7 @@ def generate_report(token: str = None, store_name: str = None) -> str:
     logger.info(f"Объединено товаров: {len(df)}")
 
     # === 2. Группировка товаров (A/B/C) ===
-    df['group'] = df['avg_per_day_30d'].apply(assign_group)
+    df['group'] = df['avg_per_day_30d'].apply(lambda x: assign_group(x, threshold_a, threshold_b))
 
     # === 3. Загрузка данных за 7 и 14 дней ===
     try:
@@ -222,7 +231,7 @@ def generate_report(token: str = None, store_name: str = None) -> str:
     df['days_remaining'] = df.apply(calc_days_remaining, axis=1)
 
     # === 6. Расчёт % повышения цены ===
-    df['price_increase_pct'] = df['days_remaining'].apply(get_price_increase)
+    df['price_increase_pct'] = df['days_remaining'].apply(lambda d: get_price_increase(d, days_threshold))
 
     # === 7. Формирование отчётов ===
     logger.info("Формирование отчётов...")
@@ -279,16 +288,17 @@ def generate_report(token: str = None, store_name: str = None) -> str:
         # Лист 1: аннотация
         ws1_last = len(report_export) + 4
         ws1.cell(row=ws1_last, column=1, value='— Группы товаров —')
-        ws1.cell(row=ws1_last + 1, column=1, value='A: ходовые (≥4 шт/день за 30д) → среднее по 7 дням')
-        ws1.cell(row=ws1_last + 2, column=1, value='B: средние (≥0.5 шт/день) → среднее по 14 дням')
-        ws1.cell(row=ws1_last + 3, column=1, value='C: редкие (<0.5 шт/день) → среднее по 30 дням')
+        ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день за 30д) → среднее по 7 дням')
+        ws1.cell(row=ws1_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день) → среднее по 14 дням')
+        ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день) → среднее по 30 дням')
+        ws1.cell(row=ws1_last + 4, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
 
         # Лист 2: аннотация (после итогов)
         ws2_last = last_row + 4
         ws2.cell(row=ws2_last, column=1, value='— Группы товаров —')
-        ws2.cell(row=ws2_last + 1, column=1, value='A: ходовые (≥4 шт/день за 30д)')
-        ws2.cell(row=ws2_last + 2, column=1, value='B: средние (≥0.5 шт/день)')
-        ws2.cell(row=ws2_last + 3, column=1, value='C: редкие (<0.5 шт/день)')
+        ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день за 30д)')
+        ws2.cell(row=ws2_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день)')
+        ws2.cell(row=ws2_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день)')
 
     logger.info(f"✓ Отчёт сохранён: {output_path}")
     logger.info("=== Генерация завершена ===")
