@@ -3,17 +3,22 @@
 """
 
 import logging
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 
-from bot.keyboards import MenuCB, NavCB, main_menu_kb
-from bot.db import get_stores, is_subscriber
+from bot.keyboards import MenuCB, NavCB, main_menu_kb, store_display_name
+from bot.db import get_stores, get_last_report, get_setting, is_subscriber
+
+_MSK = timezone(timedelta(hours=3))
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+DEFAULT_REPORT_TIME = "09:00"
 
 
 async def _send_main_menu(target, stores: list = None):
@@ -27,20 +32,36 @@ async def _send_main_menu(target, stores: list = None):
         chat_id = target.message.chat.id
 
     subscribed = await is_subscriber(chat_id)
-    sub_status = "🔔 Рассылка подключена" if subscribed else "🔕 Рассылка отключена"
+    report_time = await get_setting('report_time', DEFAULT_REPORT_TIME)
 
-    text = (
-        "📊 <b>WB Analiz Bot</b>\n\n"
-        f"🏪 Магазинов подключено: {len(stores)}\n"
-    )
-    for s in stores:
-        name = s.get('name') or f"Магазин #{s['id']}"
-        text += f"  • {name}\n"
+    text = "📊 <b>WB Analiz Bot</b>\n\n"
 
-    if not stores:
+    # Магазины с датой последнего отчёта
+    text += f"🏪 Магазинов: {len(stores)}\n"
+    if stores:
+        for s in stores:
+            name = store_display_name(s)
+            last = await get_last_report(s['id'])
+            if last:
+                # created_at хранится в UTC (SQLite datetime('now')), конвертируем в МСК
+                try:
+                    raw = last['created_at'][:16].replace('T', ' ')
+                    utc_dt = datetime.strptime(raw, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+                    msk_dt = utc_dt.astimezone(_MSK)
+                    dt_short = msk_dt.strftime('%d.%m %H:%M')
+                except Exception:
+                    dt_short = last['created_at'][:16]
+                text += f"  • {name} — {dt_short}\n"
+            else:
+                text += f"  • {name} — нет отчётов\n"
+    else:
         text += "  ⚠️ Нет подключённых магазинов\n"
 
-    text += f"\n{sub_status}\n\nВыберите действие:"
+    # Статус рассылки
+    sub_icon = "🔔" if subscribed else "🔕"
+    sub_label = "активна" if subscribed else "отключена"
+    text += f"\n⏰ Рассылка: {report_time} МСК · {sub_icon} {sub_label}\n"
+    text += "\nВыберите действие:"
 
     if isinstance(target, Message):
         await target.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")

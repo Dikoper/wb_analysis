@@ -5,13 +5,16 @@
 import os
 import asyncio
 import logging
+from datetime import datetime, timezone, timedelta
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile
 
+_MSK = timezone(timedelta(hours=3))
+
 from bot.keyboards import (
     MenuCB, StoreCB, NavCB,
-    stores_list_kb, store_actions_kb,
+    stores_list_kb, store_actions_kb, store_display_name,
 )
 from bot.db import get_stores, get_store, get_last_report, save_report_history
 from bot.report import generate_report
@@ -57,9 +60,14 @@ async def store_selected(callback: CallbackQuery, callback_data: StoreCB):
     last_report = await get_last_report(callback_data.store_id)
     last_time = None
     if last_report:
-        last_time = last_report['created_at'][:16].replace('T', ' ')
+        try:
+            raw = last_report['created_at'][:16].replace('T', ' ')
+            utc_dt = datetime.strptime(raw, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
+            last_time = utc_dt.astimezone(_MSK).strftime('%d.%m %H:%M')
+        except Exception:
+            last_time = last_report['created_at'][:16]
 
-    name = store.get('name') or f"Магазин #{store['id']}"
+    name = store_display_name(store)
     await callback.message.edit_text(
         f"🏪 <b>{name}</b>\n\nВыберите действие:",
         reply_markup=store_actions_kb(callback_data.store_id, last_time),
@@ -95,7 +103,7 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         await callback.answer("Магазин не найден", show_alert=True)
         return
 
-    name = store.get('name') or f"Магазин #{store['id']}"
+    name = store_display_name(store)
     await callback.message.edit_text(
         f"⏳ Генерирую отчёт для <b>{name}</b>...\n"
         "Загрузка данных из WB API.",

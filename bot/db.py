@@ -47,6 +47,14 @@ async def init_db():
         ''')
         await db.commit()
 
+    # Миграция: добавить marketplace_name если не существует
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute('ALTER TABLE stores ADD COLUMN marketplace_name TEXT')
+            await db.commit()
+    except Exception:
+        pass  # Колонка уже существует
+
     # Автомиграция: если stores пуста и WB_TOKEN есть в env — добавляем
     wb_token = os.getenv('WB_TOKEN')
     if wb_token:
@@ -75,6 +83,29 @@ async def init_db():
             logger.warning(f"Автомиграция CHAT_ID не удалась: {e}")
 
 
+async def migrate_trademarks():
+    """Заполняет marketplace_name из WB API для магазинов где оно не задано."""
+    import asyncio
+    stores = await get_stores()
+    missing = [s for s in stores if not s.get('marketplace_name')]
+    if not missing:
+        return
+    logger.info(f"Загружаю tradeMark для {len(missing)} магазинов...")
+    try:
+        from wb_api import get_seller_info
+    except ImportError:
+        return
+    for store in missing:
+        try:
+            info = await asyncio.to_thread(get_seller_info, store['token'])
+            trade_mark = info.get('tradeMark') if info else None
+            if trade_mark:
+                await update_store(store['id'], marketplace_name=trade_mark)
+                logger.info(f"Магазин #{store['id']}: tradeMark = {trade_mark!r}")
+        except Exception as e:
+            logger.warning(f"Магазин #{store['id']}: не удалось получить tradeMark: {e}")
+
+
 # === Stores CRUD ===
 
 async def add_store(token: str, name: str = None) -> int:
@@ -93,7 +124,7 @@ async def get_stores() -> list:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            'SELECT id, token, name, added_at FROM stores WHERE is_active = 1'
+            'SELECT id, token, name, marketplace_name, added_at FROM stores WHERE is_active = 1'
         )
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -104,7 +135,7 @@ async def get_store(store_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            'SELECT id, token, name, added_at FROM stores WHERE id = ? AND is_active = 1',
+            'SELECT id, token, name, marketplace_name, added_at FROM stores WHERE id = ? AND is_active = 1',
             (store_id,)
         )
         row = await cursor.fetchone()
@@ -113,7 +144,7 @@ async def get_store(store_id: int) -> dict | None:
 
 async def update_store(store_id: int, **kwargs):
     """Обновляет поля магазина (name, token)."""
-    allowed = {'name', 'token'}
+    allowed = {'name', 'token', 'marketplace_name'}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return

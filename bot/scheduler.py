@@ -5,6 +5,7 @@
 import asyncio
 import os
 import logging
+from datetime import datetime
 
 from aiogram import Bot
 from aiogram.types import FSInputFile
@@ -14,6 +15,7 @@ import pytz
 
 from bot.config import TIMEZONE
 from bot.db import get_stores, get_setting, save_report_history, get_subscribers
+from bot.keyboards import store_display_name
 from bot.report import generate_report
 from wb_api import WBTokenError
 
@@ -42,8 +44,30 @@ async def send_daily_reports(bot: Bot):
 
     logger.info(f"Генерация отчётов для {len(stores)} магазинов, подписчиков: {len(subscribers)}")
 
+    # Шапка рассылки
+    tz = pytz.timezone(TIMEZONE)
+    now = datetime.now(tz)
+    report_time = await get_setting('report_time', DEFAULT_REPORT_TIME)
+    store_names = ", ".join(store_display_name(s) for s in stores)
+
+    months_ru = {
+        1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+        5: "мая", 6: "июня", 7: "июля", 8: "августа",
+        9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+    }
+    date_str = f"{now.day} {months_ru[now.month]} {now.year}"
+
+    header = (
+        f"📊 <b>Ежедневный отчёт WB</b>\n"
+        f"{date_str} · {report_time} МСК\n\n"
+        f"🏪 {store_names}"
+    )
+    for chat_id in subscribers:
+        await bot.send_message(chat_id, header, parse_mode="HTML")
+
+    # Отчёт по каждому магазину
     for store in stores:
-        name = store.get('name') or f"Магазин #{store['id']}"
+        name = store_display_name(store)
         try:
             report_path = await asyncio.to_thread(
                 generate_report, token=store['token'], store_name=name
@@ -55,7 +79,7 @@ async def send_daily_reports(bot: Bot):
                 await bot.send_document(
                     chat_id=chat_id,
                     document=document,
-                    caption=f"📊 Ежедневный отчёт: {name}"
+                    caption=f"📄 {name}"
                 )
             logger.info(f"Отчёт для {name} отправлен {len(subscribers)} подписчикам")
 

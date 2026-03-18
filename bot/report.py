@@ -15,6 +15,8 @@ import sys
 import logging
 from datetime import datetime
 
+import pytz
+
 import pandas as pd
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
@@ -238,7 +240,7 @@ def generate_report(token: str = None, store_name: str = None) -> str:
     # === 8. Сохранение Excel ===
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+    timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
     name_part = f"_{store_name}" if store_name else ""
     output_path = os.path.join(REPORTS_DIR, f'price_report{name_part}_{timestamp}.xlsx')
 

@@ -5,13 +5,13 @@
 import asyncio
 import logging
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 from bot.keyboards import (
     SettingsCB, StoreCB, NavCB,
-    store_management_kb, confirm_delete_kb, cancel_kb,
+    store_management_kb, confirm_delete_kb, cancel_kb, store_display_name,
 )
 from bot.states import MenuStates
 from bot.db import get_stores, get_store, add_store, update_store, delete_store
@@ -58,29 +58,53 @@ async def ask_store_token(callback: CallbackQuery, state: FSMContext):
         reply_markup=cancel_kb(),
         parse_mode="HTML"
     )
+    await state.update_data(bot_msg_id=callback.message.message_id)
     await state.set_state(MenuStates.add_store_token)
     await callback.answer()
 
 
 @router.message(MenuStates.add_store_token, F.text)
-async def process_store_token(message: Message, state: FSMContext):
+async def process_store_token(message: Message, state: FSMContext, bot: Bot):
     """Проверка токена и добавление магазина."""
     token = message.text.strip()
 
+    # Удалить сообщение пользователя с токеном (чувствительные данные)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    bot_msg_id = data.get('bot_msg_id')
+    chat_id = message.chat.id
+
+    async def edit_bot_msg(text: str, reply_markup=None):
+        if bot_msg_id:
+            try:
+                await bot.edit_message_text(
+                    text, chat_id=chat_id, message_id=bot_msg_id,
+                    reply_markup=reply_markup, parse_mode="HTML"
+                )
+                return
+            except Exception:
+                pass
+        await bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode="HTML")
+
     if len(token) < 10:
-        await message.answer(
+        await edit_bot_msg(
             "❌ Токен слишком короткий. Проверьте правильность.",
             reply_markup=cancel_kb()
         )
         return
 
-    await message.answer("⏳ Проверяю токен...")
+    await edit_bot_msg("⏳ Проверяю токен...")
 
     try:
         info = await asyncio.to_thread(get_seller_info, token)
         name = info.get('name', 'Новый магазин') if info else 'Новый магазин'
+        trade_mark = info.get('tradeMark') if info else None
     except WBTokenError:
-        await message.answer(
+        await edit_bot_msg(
             "❌ Токен невалиден или истёк.\n"
             "Проверьте правильность токена и попробуйте снова.",
             reply_markup=cancel_kb()
@@ -89,34 +113,42 @@ async def process_store_token(message: Message, state: FSMContext):
     except Exception as e:
         logger.warning(f"Не удалось получить имя магазина: {e}")
         name = 'Новый магазин'
+        trade_mark = None
 
     store_id = await add_store(token, name)
+    if trade_mark:
+        await update_store(store_id, marketplace_name=trade_mark)
     await state.clear()
 
-    await message.answer(
-        f"✅ Магазин <b>{name}</b> добавлен (ID: {store_id})",
-        parse_mode="HTML"
+    stores = await get_stores()
+    await edit_bot_msg(
+        f"✅ Магазин <b>{name}</b> добавлен (ID: {store_id})\n\n"
+        "🏪 <b>Управление магазинами</b>",
+        reply_markup=store_management_kb(stores)
     )
     logger.info(f"Добавлен магазин: {name} (ID: {store_id})")
 
 
-# === Редактирование магазина ===
+# === Редактирование торгового названия магазина ===
 
 @router.callback_query(StoreCB.filter(F.action == "edit"))
 async def ask_edit_store(callback: CallbackQuery, callback_data: StoreCB, state: FSMContext):
-    """Запрос нового имени магазина."""
+    """Запрос торгового названия магазина (marketplace_name)."""
     store = await get_store(callback_data.store_id)
     if not store:
         await callback.answer("Магазин не найден", show_alert=True)
         return
 
-    name = store.get('name') or f"Магазин #{store['id']}"
-    await state.update_data(edit_store_id=callback_data.store_id)
+    current = store.get('marketplace_name') or '—'
+    legal = store.get('name') or f"Магазин #{store['id']}"
+    await state.update_data(edit_store_id=callback_data.store_id, bot_msg_id=callback.message.message_id)
     await state.set_state(MenuStates.edit_store_name)
 
     await callback.message.edit_text(
-        f"✏️ Текущее имя: <b>{name}</b>\n\n"
-        "Введите новое имя для магазина:",
+        f"✏️ <b>{legal}</b>\n\n"
+        f"Текущее торговое название: <b>{current}</b>\n\n"
+        "Введите торговое название (бренд на маркетплейсе).\n"
+        "Отправьте <code>-</code> чтобы сбросить.",
         reply_markup=cancel_kb(),
         parse_mode="HTML"
     )
@@ -124,23 +156,56 @@ async def ask_edit_store(callback: CallbackQuery, callback_data: StoreCB, state:
 
 
 @router.message(MenuStates.edit_store_name, F.text)
-async def process_edit_store(message: Message, state: FSMContext):
-    """Сохранение нового имени магазина."""
+async def process_edit_store(message: Message, state: FSMContext, bot: Bot):
+    """Сохранение торгового названия магазина."""
+    # Удалить сообщение пользователя
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
     data = await state.get_data()
     store_id = data.get('edit_store_id')
+    bot_msg_id = data.get('bot_msg_id')
+    chat_id = message.chat.id
+
     if not store_id:
         await state.clear()
         return
 
     new_name = message.text.strip()
-    await update_store(store_id, name=new_name)
+    # Сброс торгового названия
+    marketplace_name = None if new_name in ('-', '') else new_name
+    await update_store(store_id, marketplace_name=marketplace_name)
     await state.clear()
 
-    await message.answer(
-        f"✅ Магазин переименован в <b>{new_name}</b>",
-        parse_mode="HTML"
+    store = await get_store(store_id)
+    display = store_display_name(store) if store else f"Магазин #{store_id}"
+
+    stores = await get_stores()
+    result_text = (
+        f"✅ Торговое название обновлено: <b>{display}</b>\n\n"
+        "🏪 <b>Управление магазинами</b>"
     )
-    logger.info(f"Магазин #{store_id} переименован в {new_name}")
+
+    if bot_msg_id:
+        try:
+            await bot.edit_message_text(
+                result_text, chat_id=chat_id, message_id=bot_msg_id,
+                reply_markup=store_management_kb(stores), parse_mode="HTML"
+            )
+        except Exception:
+            await bot.send_message(
+                chat_id, result_text,
+                reply_markup=store_management_kb(stores), parse_mode="HTML"
+            )
+    else:
+        await bot.send_message(
+            chat_id, result_text,
+            reply_markup=store_management_kb(stores), parse_mode="HTML"
+        )
+
+    logger.info(f"Магазин #{store_id} marketplace_name → {marketplace_name!r}")
 
 
 # === Удаление магазина ===
@@ -153,7 +218,7 @@ async def ask_delete_store(callback: CallbackQuery, callback_data: StoreCB):
         await callback.answer("Магазин не найден", show_alert=True)
         return
 
-    name = store.get('name') or f"Магазин #{store['id']}"
+    name = store_display_name(store)
     await callback.message.edit_text(
         f"❓ Удалить магазин <b>{name}</b>?",
         reply_markup=confirm_delete_kb(callback_data.store_id),
@@ -166,7 +231,7 @@ async def ask_delete_store(callback: CallbackQuery, callback_data: StoreCB):
 async def confirm_delete_store(callback: CallbackQuery, callback_data: StoreCB):
     """Удаление магазина после подтверждения."""
     store = await get_store(callback_data.store_id)
-    name = store.get('name', '?') if store else '?'
+    name = store_display_name(store) if store else '?'
 
     await delete_store(callback_data.store_id)
 

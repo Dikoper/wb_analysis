@@ -29,6 +29,15 @@ class SubscribeCB(CallbackData, prefix="sub"):
     action: str  # "toggle"
 
 
+# === Helpers ===
+
+def store_display_name(store: dict) -> str:
+    """'Бренд (ИП)' если задано marketplace_name, иначе просто name."""
+    legal = store.get('name') or f"Магазин #{store['id']}"
+    brand = store.get('marketplace_name')
+    return f"{brand} ({legal})" if brand else legal
+
+
 # === Keyboard Builders ===
 
 def main_menu_kb() -> InlineKeyboardMarkup:
@@ -55,9 +64,8 @@ def stores_list_kb(stores: list, action: str = "select") -> InlineKeyboardMarkup
     """
     buttons = []
     for s in stores:
-        name = s.get('name') or f"Магазин #{s['id']}"
         buttons.append([InlineKeyboardButton(
-            text=name,
+            text=store_display_name(s),
             callback_data=StoreCB(action=action, store_id=s['id']).pack()
         )])
 
@@ -122,10 +130,9 @@ def store_management_kb(stores: list) -> InlineKeyboardMarkup:
     """Управление магазинами: список + добавить."""
     buttons = []
     for s in stores:
-        name = s.get('name') or f"Магазин #{s['id']}"
         buttons.append([
             InlineKeyboardButton(
-                text=f"🏪 {name}",
+                text=f"🏪 {store_display_name(s)}",
                 callback_data=StoreCB(action="edit", store_id=s['id']).pack()
             ),
             InlineKeyboardButton(
