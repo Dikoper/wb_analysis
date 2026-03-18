@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REPORT_TIME = "09:00"
 
+_scheduler: "AsyncIOScheduler | None" = None
+_bot: "Bot | None" = None
+
 
 async def send_daily_reports(bot: Bot):
     """
@@ -78,14 +81,29 @@ async def send_daily_reports(bot: Bot):
             logger.error(f"Ошибка отчёта для {name}: {e}", exc_info=True)
 
 
+def reschedule_daily_reports(time_str: str):
+    """Перепланирует задачу без перезапуска бота."""
+    if _scheduler is None:
+        logger.warning("Планировщик не инициализирован, перепланирование невозможно")
+        return
+    hour, minute = map(int, time_str.split(':'))
+    _scheduler.reschedule_job(
+        'daily_reports',
+        trigger=CronTrigger(hour=hour, minute=minute, timezone=pytz.timezone(TIMEZONE))
+    )
+    logger.info(f"Планировщик перепланирован: отчёты в {time_str} {TIMEZONE}")
+
+
 async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настраивает и запускает планировщик."""
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone(TIMEZONE))
+    global _scheduler, _bot
+    _bot = bot
+    _scheduler = AsyncIOScheduler(timezone=pytz.timezone(TIMEZONE))
 
     report_time = await get_setting('report_time', DEFAULT_REPORT_TIME)
     hour, minute = map(int, report_time.split(':'))
 
-    scheduler.add_job(
+    _scheduler.add_job(
         send_daily_reports,
         CronTrigger(hour=hour, minute=minute),
         args=[bot],
@@ -93,6 +111,6 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True
     )
 
-    scheduler.start()
+    _scheduler.start()
     logger.info(f"Планировщик запущен. Отчёты в {report_time} {TIMEZONE}")
-    return scheduler
+    return _scheduler

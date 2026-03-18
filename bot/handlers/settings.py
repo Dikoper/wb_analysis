@@ -13,6 +13,7 @@ from aiogram.fsm.context import FSMContext
 from bot.keyboards import MenuCB, SettingsCB, NavCB, SubscribeCB, settings_kb, cancel_kb
 from bot.states import MenuStates
 from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber
+from bot.scheduler import reschedule_daily_reports
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +92,11 @@ async def set_report_time(message: Message, state: FSMContext):
         return
 
     await set_setting('report_time', text)
+    reschedule_daily_reports(text)
     await state.clear()
 
     await message.answer(
-        f"✅ Время отчёта изменено на <b>{text}</b> МСК\n\n"
-        "Изменения вступят в силу при следующем запуске бота.",
+        f"✅ Время отчёта изменено на <b>{text}</b> МСК",
         parse_mode="HTML"
     )
     logger.info(f"Время отчёта изменено на {text}")
