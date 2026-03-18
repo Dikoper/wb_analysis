@@ -141,9 +141,13 @@ def format_worksheet(ws, column_widths: dict):
         ws.column_dimensions[get_column_letter(col_num)].width = width
 
 
-def generate_report() -> str:
+def generate_report(token: str = None, store_name: str = None) -> str:
     """
     Генерирует Excel-отчёт с рекомендациями по ценам.
+
+    Args:
+        token: токен WB API (если None — из переменной окружения)
+        store_name: имя магазина для имени файла
 
     Returns:
         Путь к сгенерированному файлу
@@ -153,7 +157,7 @@ def generate_report() -> str:
     # === 1. Загрузка данных за 30 дней ===
     try:
         logger.info("Загрузка заказов за 30 дней...")
-        orders_30d = get_orders(30)
+        orders_30d = get_orders(30, token=token)
         logger.info(f"✓ Заказы 30д: {len(orders_30d)} записей")
     except Exception as e:
         logger.error(f"✗ Ошибка загрузки заказов 30д: {e}")
@@ -161,7 +165,7 @@ def generate_report() -> str:
 
     try:
         logger.info("Загрузка остатков...")
-        stocks = get_stocks(orders_30d['nmId'].tolist())
+        stocks = get_stocks(orders_30d['nmId'].tolist(), token=token)
         logger.info(f"✓ Остатки: {len(stocks)} записей")
     except Exception as e:
         logger.error(f"✗ Ошибка загрузки остатков: {e}")
@@ -189,7 +193,7 @@ def generate_report() -> str:
     # === 3. Загрузка данных за 7 и 14 дней ===
     try:
         logger.info("Загрузка заказов за 7 дней...")
-        orders_7d = get_orders(7)
+        orders_7d = get_orders(7, token=token)
         orders_7d = orders_7d[['nmId', 'orders_count_7d']]
         logger.info(f"✓ Заказы 7д: {len(orders_7d)} записей")
     except Exception as e:
@@ -198,7 +202,7 @@ def generate_report() -> str:
 
     try:
         logger.info("Загрузка заказов за 14 дней...")
-        orders_14d = get_orders(14)
+        orders_14d = get_orders(14, token=token)
         orders_14d = orders_14d[['nmId', 'orders_count_14d']]
         logger.info(f"✓ Заказы 14д: {len(orders_14d)} записей")
     except Exception as e:
@@ -235,7 +239,8 @@ def generate_report() -> str:
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-    output_path = os.path.join(REPORTS_DIR, f'price_report_{timestamp}.xlsx')
+    name_part = f"_{store_name}" if store_name else ""
+    output_path = os.path.join(REPORTS_DIR, f'price_report{name_part}_{timestamp}.xlsx')
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         # Лист 1: с колонкой "В возвратах" для прозрачности

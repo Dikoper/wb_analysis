@@ -7,7 +7,10 @@ services:
       - ./feedback:/app/feedback
       # Сохранение отчётов
       - ./reports:/app/reports
+      # База данных (магазины, настройки)
+      - ./data:/app/data
     restart: unless-stopped
     environment:
       - FEEDBACK_DIR=/app/feedback
       - REPORTS_DIR=/app/reports
+      - DB_PATH=/app/data/bot.db
