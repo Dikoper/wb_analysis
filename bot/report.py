@@ -18,7 +18,7 @@ from datetime import datetime
 import pytz
 
 import pandas as pd
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
 # Настройка логирования
@@ -30,6 +30,45 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from wb_api import get_orders, get_stocks, merge_orders_stocks, calc_avg_per_day
 from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
 
+# ── Цветовые константы ────────────────────────────────────────────────────────
+
+# Шапка таблицы
+HEADER_BG = "2E4057"
+HEADER_FG = "FFFFFF"
+
+# Цвета групп (фон ячейки)
+GROUP_COLORS = {
+    "A": "B7E4C7",  # мятный зелёный
+    "B": "FFD6A5",  # персиковый
+    "C": "C8B6E2",  # лавандовый
+}
+
+# Градиент повышения цены: {%: (фон, цвет_текста)}
+PRICE_INCREASE_COLORS = {
+    5:  ("FFF9C4", "333333"),
+    10: ("FFE082", "333333"),
+    15: ("FFB300", "333333"),
+    25: ("FF8F00", "FFFFFF"),
+    30: ("E65100", "FFFFFF"),
+    40: ("BF360C", "FFFFFF"),
+    50: ("7B1818", "FFFFFF"),
+}
+
+# Ссылка на кабинет продавца WB
+WB_CABINET_URL = "https://seller.wildberries.ru/goods-content/edit/list/edit?nmID={}"
+
+# ── Вспомогательные стили ─────────────────────────────────────────────────────
+
+def _thin_border(color="CCCCCC"):
+    side = Side(style="thin", color=color)
+    return Border(left=side, right=side, top=side, bottom=side)
+
+
+def _fill(hex_color):
+    return PatternFill(fill_type="solid", fgColor=hex_color)
+
+
+# ── Логика группировки и расчётов ─────────────────────────────────────────────
 
 def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold_b: float = THRESHOLD_B) -> str:
     """
@@ -107,41 +146,87 @@ def get_price_increase(days_remaining: float, days_threshold: int = 7) -> int:
         return 50
 
 
-def format_worksheet(ws, column_widths: dict):
-    """
-    Форматирует лист Excel: ширина столбцов, шрифт, выравнивание.
+# ── Форматирование Excel ──────────────────────────────────────────────────────
 
-    Args:
-        ws: worksheet объект openpyxl
-        column_widths: словарь {номер_столбца: ширина}
-    """
-    # Шрифт для заголовков (жирный)
-    header_font = Font(name='Arial', size=11, bold=True)
-    # Шрифт для данных
-    data_font = Font(name='Arial', size=10)
-    # Выравнивание по центру
-    center_align = Alignment(horizontal='center', vertical='center')
-    left_align = Alignment(horizontal='left', vertical='center')
+def apply_header_style(ws, column_widths: dict):
+    """Тёмная шапка, фриз, авто-фильтр, высота строк, ширина столбцов."""
+    header_font = Font(name="Arial", size=11, bold=True, color=HEADER_FG)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    # Форматируем заголовки (первая строка)
+    ws.row_dimensions[1].height = 22
     for cell in ws[1]:
         cell.font = header_font
-        cell.alignment = center_align
+        cell.fill = _fill(HEADER_BG)
+        cell.alignment = center
+        cell.border = _thin_border("444444")
 
-    # Форматируем данные
-    for row in ws.iter_rows(min_row=2):
-        for cell in row:
-            cell.font = data_font
-            # Первый столбец (артикул) — по левому краю
-            if cell.column == 1:
-                cell.alignment = left_align
-            else:
-                cell.alignment = center_align
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
 
-    # Устанавливаем ширину столбцов
     for col_num, width in column_widths.items():
         ws.column_dimensions[get_column_letter(col_num)].width = width
 
+
+def apply_data_style(ws, float_cols: list, int_cols: list):
+    """Шрифт, выравнивание, высота строк, числовые форматы для строк с данными."""
+    data_font = Font(name="Arial", size=10, color="1A1A2E")
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+
+    border = _thin_border()
+
+    for row in ws.iter_rows(min_row=2):
+        # пропускаем строки аннотаций (нет значения во 2-м столбце)
+        if row[0].value is None:
+            continue
+        ws.row_dimensions[row[0].row].height = 16
+        for cell in row:
+            cell.font = data_font
+            cell.border = border
+            cell.alignment = left if cell.column == 1 else center
+            if cell.column in float_cols:
+                cell.number_format = "0.00"
+            elif cell.column in int_cols:
+                cell.number_format = "0"
+
+
+def apply_group_colors(ws, group_col: int):
+    """Окрашивает только ячейку группы товара."""
+    for row in ws.iter_rows(min_row=2):
+        cell = row[group_col - 1]
+        group = cell.value
+        if group in GROUP_COLORS:
+            cell.fill = _fill(GROUP_COLORS[group])
+            cell.font = Font(name="Arial", size=10, bold=True, color="1A1A2E")
+
+
+def apply_price_increase_colors(ws, pct_col: int):
+    """Градиент фона + контрастный текст для ячейки % повышения."""
+    for row in ws.iter_rows(min_row=2):
+        cell = row[pct_col - 1]
+        pct = cell.value
+        if pct in PRICE_INCREASE_COLORS:
+            bg, fg = PRICE_INCREASE_COLORS[pct]
+            cell.fill = _fill(bg)
+            cell.font = Font(name="Arial", size=10, bold=True, color=fg)
+
+
+def apply_hyperlinks(ws, link_col: int):
+    """Превращает nmId в кликабельные ссылки на кабинет WB."""
+    hyperlink_font = Font(name="Arial", size=10, color="1155CC", underline="single")
+    center = Alignment(horizontal="center", vertical="center")
+    for row in ws.iter_rows(min_row=2):
+        cell = row[link_col - 1]
+        nm_id = cell.value
+        if nm_id is not None:
+            url = WB_CABINET_URL.format(nm_id)
+            cell.hyperlink = url
+            cell.value = nm_id
+            cell.font = hyperlink_font
+            cell.alignment = center
+
+
+# ── Основная функция генерации ────────────────────────────────────────────────
 
 def generate_report(
     token: str = None,
@@ -254,38 +339,55 @@ def generate_report(
     output_path = os.path.join(REPORTS_DIR, f'price_report{name_part}_{timestamp}.xlsx')
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        # Лист 1: с колонкой "В возвратах" для прозрачности
-        report_export = report[['supplierArticle', 'group', 'stock_qty',
-                                'in_way_from_client',
-                                'avg_per_day', 'days_remaining', 'price_increase_pct']]
-        report_export.columns = ['Артикул', 'Группа', 'Остаток (чист.)',
-                                 'В возвратах',
-                                 'Продаж/день', 'Дней осталось', 'Повышение %']
+        # ── Лист 1: Повысить цену ──────────────────────────────────────────
+        # Колонки: Артикул | ID (WB) | Группа | Остаток (чист.) | В возвратах | Продаж/день | Дней осталось | Повышение %
+        report_export = report[[
+            'supplierArticle', 'nmId', 'group',
+            'stock_qty', 'in_way_from_client',
+            'avg_per_day', 'days_remaining', 'price_increase_pct'
+        ]].copy()
+        report_export.columns = [
+            'Артикул', 'ID (WB)', 'Группа',
+            'Остаток (чист.)', 'В возвратах',
+            'Продаж/день', 'Дней осталось', 'Повышение %'
+        ]
         report_export.to_excel(writer, sheet_name='Повысить цену', index=False)
 
-        # Лист 2
-        out_of_stock_export = out_of_stock[['supplierArticle', 'group', 'avg_per_day']]
-        out_of_stock_export.columns = ['Артикул', 'Группа', 'Продаж/день']
+        # ── Лист 2: Нет на складе ─────────────────────────────────────────
+        # Колонки: Артикул | ID (WB) | Группа | Продаж/день
+        out_of_stock_export = out_of_stock[[
+            'supplierArticle', 'nmId', 'group', 'avg_per_day'
+        ]].copy()
+        out_of_stock_export.columns = ['Артикул', 'ID (WB)', 'Группа', 'Продаж/день']
         out_of_stock_export.to_excel(writer, sheet_name='Нет на складе', index=False)
 
-        # Добавляем итоги внизу листа 2
+        # Итоги внизу листа 2
         ws2 = writer.sheets['Нет на складе']
         last_row = len(out_of_stock_export) + 3
         ws2.cell(row=last_row, column=1, value=f'Товаров с нулевым остатком: {len(out_of_stock)}')
-        ws2.cell(row=last_row + 1, column=1, value=f'Упущенные продажи в день: {out_of_stock["avg_per_day"].sum():.1f} шт')
+        ws2.cell(row=last_row + 1, column=1, value=f'Упущенные продажи в день: {out_of_stock["avg_per_day"].sum():.2f} шт')
 
-        # === 9. Форматирование Excel ===
+        # === 9. Форматирование ===
         logger.info("Форматирование Excel...")
 
-        # Лист 1: ширина столбцов
         ws1 = writer.sheets['Повысить цену']
-        format_worksheet(ws1, {1: 20, 2: 10, 3: 16, 4: 14, 5: 14, 6: 16, 7: 14})
 
-        # Лист 2: ширина столбцов
-        format_worksheet(ws2, {1: 20, 2: 10, 3: 14})
+        # Лист 1
+        # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=Возвраты, 6=Прод/день, 7=Дней, 8=Повышение%
+        apply_header_style(ws1, {1: 22, 2: 14, 3: 10, 4: 16, 5: 14, 6: 14, 7: 16, 8: 14})
+        apply_data_style(ws1, float_cols=[6, 7], int_cols=[4, 5, 8])
+        apply_hyperlinks(ws1, link_col=2)
+        apply_group_colors(ws1, group_col=3)
+        apply_price_increase_colors(ws1, pct_col=8)
+
+        # Лист 2
+        # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Прод/день
+        apply_header_style(ws2, {1: 22, 2: 14, 3: 10, 4: 14})
+        apply_data_style(ws2, float_cols=[4], int_cols=[])
+        apply_hyperlinks(ws2, link_col=2)
+        apply_group_colors(ws2, group_col=3)
 
         # === 10. Аннотации под таблицами ===
-        # Лист 1: аннотация
         ws1_last = len(report_export) + 4
         ws1.cell(row=ws1_last, column=1, value='— Группы товаров —')
         ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день за 30д) → среднее по 7 дням')
@@ -293,7 +395,6 @@ def generate_report(
         ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день) → среднее по 30 дням')
         ws1.cell(row=ws1_last + 4, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
 
-        # Лист 2: аннотация (после итогов)
         ws2_last = last_row + 4
         ws2.cell(row=ws2_last, column=1, value='— Группы товаров —')
         ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день за 30д)')
