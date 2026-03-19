@@ -11,7 +11,7 @@
 """
 
 import os
-import sys
+import re
 import logging
 from datetime import datetime
 
@@ -23,9 +23,6 @@ from openpyxl.utils import get_column_letter
 
 # Настройка логирования
 logger = logging.getLogger(__name__)
-
-# Добавляем родительскую директорию для импорта wb_api
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from wb_api import get_orders, get_stocks, merge_orders_stocks, calc_avg_per_day
 from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
@@ -357,7 +354,8 @@ def generate_report(
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
     timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
-    name_part = f"_{store_name}" if store_name else ""
+    safe_name = re.sub(r'[^\w\s-]', '', store_name).strip()[:50] if store_name else ""
+    name_part = f"_{safe_name}" if safe_name else ""
     output_path = os.path.join(REPORTS_DIR, f'price_report{name_part}_{timestamp}.xlsx')
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:

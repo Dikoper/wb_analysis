@@ -31,3 +31,6 @@ data/
 
 # Legacy
 legacy_v1/
+
+# Claude
+.claude/
