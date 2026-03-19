@@ -55,7 +55,7 @@ PRICE_INCREASE_COLORS = {
 }
 
 # Ссылка на кабинет продавца WB
-WB_CABINET_URL = "https://seller.wildberries.ru/goods-content/edit/list/edit?nmID={}"
+WB_CABINET_URL = "https://www.wildberries.ru/catalog/{}/detail.aspx"
 
 # ── Вспомогательные стили ─────────────────────────────────────────────────────
 
@@ -153,7 +153,7 @@ def apply_header_style(ws, column_widths: dict):
     header_font = Font(name="Arial", size=11, bold=True, color=HEADER_FG)
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
-    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[1].height = 34
     for cell in ws[1]:
         cell.font = header_font
         cell.fill = _fill(HEADER_BG)
@@ -209,6 +209,28 @@ def apply_price_increase_colors(ws, pct_col: int):
             bg, fg = PRICE_INCREASE_COLORS[pct]
             cell.fill = _fill(bg)
             cell.font = Font(name="Arial", size=10, bold=True, color=fg)
+
+
+def apply_legend_style(ws, start_row: int, has_threshold_row: bool = False):
+    """Ненавязчивый стиль для аннотаций под таблицей."""
+    title_font = Font(name="Arial", size=9, bold=True, color="888888")
+    row_font = Font(name="Arial", size=9, italic=True, color="999999")
+    note_font = Font(name="Arial", size=9, color="999999")
+    summary_font = Font(name="Arial", size=9, bold=True, color="555555")
+
+    # start_row: строка «— Группы товаров —»
+    ws.cell(row=start_row, column=1).font = title_font
+    ws.cell(row=start_row + 1, column=1).font = row_font
+    ws.cell(row=start_row + 2, column=1).font = row_font
+    ws.cell(row=start_row + 3, column=1).font = row_font
+    if has_threshold_row:
+        ws.cell(row=start_row + 4, column=1).font = note_font
+
+    # Итоговые строки листа 2 (на 4 строки выше start_row: пустая + 2 итога + пустая)
+    summary_row = start_row - 4
+    if summary_row >= 1:
+        ws.cell(row=summary_row, column=1).font = summary_font
+        ws.cell(row=summary_row + 1, column=1).font = summary_font
 
 
 def apply_hyperlinks(ws, link_col: int):
@@ -374,7 +396,7 @@ def generate_report(
 
         # Лист 1
         # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=Возвраты, 6=Прод/день, 7=Дней, 8=Повышение%
-        apply_header_style(ws1, {1: 22, 2: 14, 3: 10, 4: 16, 5: 14, 6: 14, 7: 16, 8: 14})
+        apply_header_style(ws1, {1: 24, 2: 15, 3: 11, 4: 17, 5: 15, 6: 15, 7: 17, 8: 15})
         apply_data_style(ws1, float_cols=[6, 7], int_cols=[4, 5, 8])
         apply_hyperlinks(ws1, link_col=2)
         apply_group_colors(ws1, group_col=3)
@@ -382,7 +404,7 @@ def generate_report(
 
         # Лист 2
         # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Прод/день
-        apply_header_style(ws2, {1: 22, 2: 14, 3: 10, 4: 14})
+        apply_header_style(ws2, {1: 24, 2: 15, 3: 11, 4: 15})
         apply_data_style(ws2, float_cols=[4], int_cols=[])
         apply_hyperlinks(ws2, link_col=2)
         apply_group_colors(ws2, group_col=3)
@@ -394,12 +416,14 @@ def generate_report(
         ws1.cell(row=ws1_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день) → среднее по 14 дням')
         ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день) → среднее по 30 дням')
         ws1.cell(row=ws1_last + 4, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
+        apply_legend_style(ws1, ws1_last, has_threshold_row=True)
 
         ws2_last = last_row + 4
         ws2.cell(row=ws2_last, column=1, value='— Группы товаров —')
         ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день за 30д)')
         ws2.cell(row=ws2_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день)')
         ws2.cell(row=ws2_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день)')
+        apply_legend_style(ws2, ws2_last, has_threshold_row=False)
 
     logger.info(f"✓ Отчёт сохранён: {output_path}")
     logger.info("=== Генерация завершена ===")
