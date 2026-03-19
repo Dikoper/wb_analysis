@@ -7,6 +7,7 @@ from aiogram.fsm.state import StatesGroup, State
 
 class MenuStates(StatesGroup):
     """Состояния меню бота."""
+    waiting_password = State()
     main = State()
     analysis_select_store = State()
     analysis_store_actions = State()

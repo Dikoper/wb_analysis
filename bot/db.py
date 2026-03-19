@@ -45,6 +45,12 @@ async def init_db():
                 subscribed_at TEXT DEFAULT (datetime('now'))
             )
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS authorized_users (
+                chat_id INTEGER PRIMARY KEY,
+                authorized_at TEXT DEFAULT (datetime('now'))
+            )
+        ''')
         await db.commit()
 
     # Миграция: добавить marketplace_name если не существует
@@ -277,3 +283,25 @@ async def is_subscriber(chat_id: int) -> bool:
             (chat_id,)
         )
         return await cursor.fetchone() is not None
+
+
+# === Authorization ===
+
+async def is_authorized(chat_id: int) -> bool:
+    """Проверяет, авторизован ли пользователь."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            'SELECT 1 FROM authorized_users WHERE chat_id = ?',
+            (chat_id,)
+        )
+        return await cursor.fetchone() is not None
+
+
+async def authorize_user(chat_id: int):
+    """Добавляет пользователя в список авторизованных."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            'INSERT OR IGNORE INTO authorized_users (chat_id) VALUES (?)',
+            (chat_id,)
+        )
+        await db.commit()

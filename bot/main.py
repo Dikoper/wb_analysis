@@ -16,10 +16,11 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # Добавляем родительскую директорию для импорта
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from bot.config import TELEGRAM_TOKEN, LOGS_DIR, REPORT_RETENTION_DAYS, LOG_RETENTION_DAYS
+from bot.config import TELEGRAM_TOKEN, BOT_PASSWORD, LOGS_DIR, REPORT_RETENTION_DAYS, LOG_RETENTION_DAYS
 from bot.handlers import register_routers
 from bot.handlers.feedback import cleanup_old_feedback
 from bot.db import init_db, cleanup_old_reports, migrate_trademarks
+from bot.middleware import AuthMiddleware
 from bot.scheduler import setup_scheduler
 
 # Создаём директорию для логов
@@ -61,6 +62,13 @@ async def main():
     # Инициализация бота и диспетчера
     bot = Bot(token=TELEGRAM_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
+
+    # Middleware авторизации
+    dp.message.middleware(AuthMiddleware())
+    dp.callback_query.middleware(AuthMiddleware())
+
+    if not BOT_PASSWORD:
+        logger.warning("BOT_PASSWORD не задан — авторизация отключена, бот открыт для всех")
 
     # Подключение роутеров
     register_routers(dp)

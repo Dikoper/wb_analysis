@@ -5,12 +5,15 @@
 import logging
 from datetime import datetime, timezone, timedelta
 
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 
+from bot.config import BOT_PASSWORD
 from bot.keyboards import MenuCB, NavCB, main_menu_kb, store_display_name
-from bot.db import get_stores, get_last_report, get_setting, is_subscriber
+from bot.db import get_stores, get_last_report, get_setting, is_subscriber, is_authorized, authorize_user
+from bot.states import MenuStates
 
 _MSK = timezone(timedelta(hours=3))
 
@@ -71,9 +74,46 @@ async def _send_main_menu(target, stores: list = None):
 
 
 @router.message(Command('start'))
-async def cmd_start(message: Message):
-    """Обработчик /start — показывает главное меню."""
-    await _send_main_menu(message)
+async def cmd_start(message: Message, state: FSMContext):
+    """Обработчик /start — показывает главное меню или запрашивает пароль."""
+    if not BOT_PASSWORD or await is_authorized(message.from_user.id):
+        await state.clear()
+        await _send_main_menu(message)
+    else:
+        await message.answer("🔑 Введите пароль для доступа к боту:")
+        await state.set_state(MenuStates.waiting_password)
+
+
+@router.message(MenuStates.waiting_password, F.text)
+async def process_password(message: Message, state: FSMContext, bot: Bot):
+    """Проверка пароля при авторизации."""
+    password = message.text.strip()
+
+    # Удаляем сообщение с паролем из чата
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    if password == BOT_PASSWORD:
+        await authorize_user(message.from_user.id)
+        logger.info(
+            f"User {message.from_user.id} (@{message.from_user.username}) authorized successfully"
+        )
+        await state.clear()
+        await bot.send_message(
+            message.chat.id,
+            "✅ Авторизация успешна!\n"
+        )
+        await _send_main_menu(message)
+    else:
+        logger.warning(
+            f"Failed auth attempt from user {message.from_user.id} (@{message.from_user.username})"
+        )
+        await bot.send_message(
+            message.chat.id,
+            "❌ Неверный пароль. Попробуйте ещё раз:"
+        )
 
 
 @router.message(Command('menu'))
