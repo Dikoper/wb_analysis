@@ -13,6 +13,54 @@ logger = logging.getLogger(__name__)
 DB_PATH = os.getenv('DB_PATH', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'bot.db'))
 
 
+# === Миграции БД ===
+# Каждая миграция — (версия, SQL или async-функция).
+# SQL выполняется напрямую; функция вызывается с аргументом db (aiosqlite.Connection).
+
+async def _migrate_obfuscate_tokens(db):
+    """Обфусцирует plaintext-токены (без префикса 'obf:')."""
+    cursor = await db.execute("SELECT id, token FROM stores WHERE token NOT LIKE 'obf:%'")
+    plain_rows = await cursor.fetchall()
+    for row_id, raw_token in plain_rows:
+        await db.execute('UPDATE stores SET token = ? WHERE id = ?', (obfuscate_token(raw_token), row_id))
+    if plain_rows:
+        logger.info(f"Обфусцировано токенов: {len(plain_rows)}")
+
+
+MIGRATIONS = [
+    (1, "ALTER TABLE stores ADD COLUMN marketplace_name TEXT"),
+    (2, _migrate_obfuscate_tokens),
+]
+
+
+async def _run_migrations(db):
+    """Применяет миграции по порядку, пропуская уже применённые."""
+    await db.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version "
+        "(version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))"
+    )
+    cursor = await db.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version")
+    current = (await cursor.fetchone())[0]
+
+    for version, migration in MIGRATIONS:
+        if version <= current:
+            continue
+        try:
+            if callable(migration):
+                await migration(db)
+            else:
+                await db.execute(migration)
+            await db.execute(
+                "INSERT INTO schema_version (version) VALUES (?)", (version,)
+            )
+            logger.info(f"Миграция #{version} применена")
+        except Exception as e:
+            logger.error(f"Миграция #{version} ошибка: {e}")
+            raise
+
+    await db.commit()
+
+
 async def init_db():
     """Создаёт таблицы если не существуют. Автомигрирует WB_TOKEN из env."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -89,23 +137,8 @@ async def init_db():
         ''')
         await db.commit()
 
-    # Миграция: добавить marketplace_name если не существует
-    try:
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute('ALTER TABLE stores ADD COLUMN marketplace_name TEXT')
-            await db.commit()
-    except Exception:
-        pass  # Колонка уже существует
-
-    # Миграция: обфусцировать plaintext-токены (без префикса 'obf:')
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT id, token FROM stores WHERE token NOT LIKE 'obf:%'")
-        plain_rows = await cursor.fetchall()
-        for row_id, raw_token in plain_rows:
-            await db.execute('UPDATE stores SET token = ? WHERE id = ?', (obfuscate_token(raw_token), row_id))
-        if plain_rows:
-            await db.commit()
-            logger.info(f"Обфусцировано токенов: {len(plain_rows)}")
+        # Применить миграции
+        await _run_migrations(db)
 
     # Автомиграция: если stores пуста и WB_TOKEN есть в env — добавляем
     wb_token = os.getenv('WB_TOKEN')

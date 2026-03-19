@@ -6,6 +6,7 @@ import asyncio
 import os
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from aiogram import Bot
 from aiogram.types import FSInputFile
@@ -25,9 +26,18 @@ from wb_api import WBTokenError
 logger = logging.getLogger(__name__)
 
 DEFAULT_REPORT_TIME = "09:00"
+HEALTH_FILE = os.getenv('HEALTH_FILE', '/tmp/health')
 
 _scheduler: "AsyncIOScheduler | None" = None
 _bot: "Bot | None" = None
+
+
+async def _touch_health():
+    """Обновляет mtime файла-маркера для Docker healthcheck."""
+    try:
+        Path(HEALTH_FILE).touch()
+    except Exception:
+        pass
 
 
 async def send_daily_reports(bot: Bot):
@@ -156,6 +166,15 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True
     )
 
+    _scheduler.add_job(
+        _touch_health,
+        'interval',
+        seconds=30,
+        id='healthcheck',
+        replace_existing=True
+    )
+
     _scheduler.start()
+    await _touch_health()
     logger.info(f"Планировщик запущен. Отчёты в {report_time} {TIMEZONE}")
     return _scheduler
