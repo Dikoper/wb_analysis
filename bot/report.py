@@ -526,16 +526,23 @@ def generate_comparison_report(
             if art not in result:
                 result[art] = r.copy()
             else:
-                # Суммируем остатки, берём max avg_per_day
+                # Суммируем остатки и продажи по всем nmId одного артикула
                 existing = result[art]
                 existing['stock_qty'] = existing.get('stock_qty', 0) + r.get('stock_qty', 0)
                 existing['stock_qty_clean'] = existing.get('stock_qty_clean', 0) + r.get('stock_qty_clean', 0)
-                if (r.get('avg_per_day') or 0) > (existing.get('avg_per_day') or 0):
-                    existing['avg_per_day'] = r.get('avg_per_day')
+                existing['avg_per_day'] = (existing.get('avg_per_day') or 0) + (r.get('avg_per_day') or 0)
+                # nm_id / price — берём от варианта с наибольшими продажами
+                if (r.get('avg_per_day') or 0) > (existing.get('_max_avg') or 0):
+                    existing['_max_avg'] = r.get('avg_per_day') or 0
                     existing['nm_id'] = r.get('nm_id')
-                    existing['product_group'] = r.get('product_group')
-                    existing['days_remaining'] = r.get('days_remaining')
                     existing['price'] = r.get('price')
+
+        # Пересчитываем days_remaining и группу после агрегации
+        for item in result.values():
+            avg = item.get('avg_per_day') or 0
+            item['days_remaining'] = (item['stock_qty'] / avg) if avg > 0 else None
+            item['product_group'] = assign_group(avg)
+            item.pop('_max_avg', None)
         return result
 
     agg1 = aggregate_by_article(store1_data)
