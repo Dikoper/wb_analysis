@@ -10,6 +10,7 @@ from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message
 
+from bot.keyboards import back_to_menu_kb
 from bot.config import FEEDBACK_DIR, FEEDBACK_RETENTION_MONTHS
 
 logger = logging.getLogger(__name__)
@@ -59,7 +60,7 @@ def save_feedback(emoji: str = '', comment: str = ''):
 async def handle_emoji_feedback(message: Message):
     """Обработчик эмодзи-реакций."""
     save_feedback(emoji=message.text)
-    await message.answer("✅ Фидбек сохранён!")
+    await message.answer("✅ Фидбек сохранён!", reply_markup=back_to_menu_kb())
 
 
 @router.message(F.text)
@@ -68,4 +69,4 @@ async def handle_text_feedback(message: Message):
     if message.text.startswith('/'):
         return
     save_feedback(comment=message.text)
-    await message.answer("✅ Комментарий сохранён!")
+    await message.answer("✅ Комментарий сохранён!", reply_markup=back_to_menu_kb())

@@ -9,6 +9,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 
 from bot.config import BOT_PASSWORD
 from bot.keyboards import MenuCB, NavCB, main_menu_kb, store_display_name
@@ -70,7 +71,11 @@ async def _send_main_menu(target, stores: list = None):
     if isinstance(target, Message):
         await target.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
     elif isinstance(target, CallbackQuery):
-        await target.message.edit_text(text, reply_markup=main_menu_kb(), parse_mode="HTML")
+        try:
+            await target.message.edit_text(text, reply_markup=main_menu_kb(), parse_mode="HTML")
+        except TelegramBadRequest:
+            # Сообщение-документ нельзя edit_text — отправляем новое
+            await target.message.answer(text, reply_markup=main_menu_kb(), parse_mode="HTML")
         await target.answer()
 
 
