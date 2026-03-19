@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import os
+import sys
 from logging.handlers import TimedRotatingFileHandler
 
 from aiogram import Bot, Dispatcher
