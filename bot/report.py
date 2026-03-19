@@ -245,29 +245,21 @@ def apply_hyperlinks(ws, link_col: int):
             cell.alignment = center
 
 
-# ── Основная функция генерации ────────────────────────────────────────────────
+# ── Загрузка данных из API ────────────────────────────────────────────────────
 
-def generate_report(
+def fetch_store_data(
     token: str = None,
-    store_name: str = None,
     days_threshold: int = 7,
     threshold_a: float = THRESHOLD_A,
     threshold_b: float = THRESHOLD_B,
-) -> str:
+) -> list[dict]:
     """
-    Генерирует Excel-отчёт с рекомендациями по ценам.
-
-    Args:
-        token: токен WB API (если None — из переменной окружения)
-        store_name: имя магазина для имени файла
-        days_threshold: порог дней остатка для шкалы повышения цены
-        threshold_a: мин. продаж/день для группы A
-        threshold_b: мин. продаж/день для группы B
+    Загружает данные из WB API, рассчитывает метрики.
 
     Returns:
-        Путь к сгенерированному файлу
+        Список словарей — по одному на каждый товар (nm_id).
     """
-    logger.info("=== Начало генерации отчёта ===")
+    logger.info("=== Загрузка данных из WB API ===")
 
     # === 1. Загрузка данных за 30 дней ===
     try:
@@ -337,8 +329,66 @@ def generate_report(
     # === 6. Расчёт % повышения цены ===
     df['price_increase_pct'] = df['days_remaining'].apply(lambda d: get_price_increase(d, days_threshold))
 
-    # === 7. Формирование отчётов ===
-    logger.info("Формирование отчётов...")
+    logger.info("=== Данные загружены и рассчитаны ===")
+
+    # Конвертируем в list[dict] для сохранения в БД
+    result = []
+    for _, row in df.iterrows():
+        result.append({
+            'nm_id': int(row['nmId']),
+            'supplier_article': row.get('supplierArticle'),
+            'subject': row.get('subject'),
+            'category': row.get('category'),
+            'product_group': row['group'],
+            'stock_qty': int(row['stock_qty']),
+            'in_way_from_client': int(row['in_way_from_client']),
+            'stock_qty_clean': int(row['stock_qty_clean']),
+            'orders_7d': int(row['orders_count_7d']) if pd.notna(row.get('orders_count_7d')) else None,
+            'orders_14d': int(row['orders_count_14d']) if pd.notna(row.get('orders_count_14d')) else None,
+            'orders_30d': int(row['orders_count_30d']),
+            'avg_per_day': round(row['avg_per_day'], 4),
+            'days_remaining': round(row['days_remaining'], 2) if row['days_remaining'] is not None else None,
+            'price_increase_pct': int(row['price_increase_pct']),
+        })
+
+    return result
+
+
+# ── Генерация Excel из данных ────────────────────────────────────────────────
+
+def generate_report_from_data(
+    product_rows: list[dict],
+    store_name: str = None,
+    days_threshold: int = 7,
+    threshold_a: float = THRESHOLD_A,
+    threshold_b: float = THRESHOLD_B,
+) -> str:
+    """
+    Генерирует Excel-отчёт из готовых данных (без обращения к API).
+
+    Args:
+        product_rows: список словарей с данными товаров (из БД или fetch_store_data)
+        store_name: имя магазина для имени файла
+        days_threshold: порог дней остатка (для аннотаций)
+        threshold_a: порог группы A (для аннотаций)
+        threshold_b: порог группы B (для аннотаций)
+
+    Returns:
+        Путь к сгенерированному файлу
+    """
+    logger.info("=== Генерация Excel-отчёта ===")
+
+    df = pd.DataFrame(product_rows)
+
+    if df.empty:
+        logger.warning("Нет данных для отчёта")
+        # Создаём пустой отчёт
+        df = pd.DataFrame(columns=[
+            'nm_id', 'supplier_article', 'subject', 'category',
+            'product_group', 'stock_qty', 'in_way_from_client', 'stock_qty_clean',
+            'orders_7d', 'orders_14d', 'orders_30d',
+            'avg_per_day', 'days_remaining', 'price_increase_pct',
+        ])
 
     # Лист 1: Товары для повышения цены (есть остаток И нужно повышение)
     report = df[(df['stock_qty'] > 0) & (df['price_increase_pct'] > 0)].copy()
@@ -347,10 +397,10 @@ def generate_report(
 
     # Лист 2: Товары с нулевым остатком
     out_of_stock = df[df['stock_qty'] == 0].copy()
-    out_of_stock = out_of_stock.sort_values(['group', 'avg_per_day'], ascending=[True, False])
+    out_of_stock = out_of_stock.sort_values(['product_group', 'avg_per_day'], ascending=[True, False])
     logger.info(f"Товаров с нулевым остатком: {len(out_of_stock)}")
 
-    # === 8. Сохранение Excel ===
+    # Сохранение Excel
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
     timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
@@ -360,9 +410,8 @@ def generate_report(
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         # ── Лист 1: Повысить цену ──────────────────────────────────────────
-        # Колонки: Артикул | ID (WB) | Группа | Остаток (чист.) | В возвратах | Продаж/день | Дней осталось | Повышение %
         report_export = report[[
-            'supplierArticle', 'nmId', 'group',
+            'supplier_article', 'nm_id', 'product_group',
             'stock_qty', 'in_way_from_client',
             'avg_per_day', 'days_remaining', 'price_increase_pct'
         ]].copy()
@@ -374,9 +423,8 @@ def generate_report(
         report_export.to_excel(writer, sheet_name='Повысить цену', index=False)
 
         # ── Лист 2: Нет на складе ─────────────────────────────────────────
-        # Колонки: Артикул | ID (WB) | Группа | Продаж/день
         out_of_stock_export = out_of_stock[[
-            'supplierArticle', 'nmId', 'group', 'avg_per_day'
+            'supplier_article', 'nm_id', 'product_group', 'avg_per_day'
         ]].copy()
         out_of_stock_export.columns = ['Артикул', 'ID (WB)', 'Группа', 'Продаж/день']
         out_of_stock_export.to_excel(writer, sheet_name='Нет на складе', index=False)
@@ -387,13 +435,12 @@ def generate_report(
         ws2.cell(row=last_row, column=1, value=f'Товаров с нулевым остатком: {len(out_of_stock)}')
         ws2.cell(row=last_row + 1, column=1, value=f'Упущенные продажи в день: {out_of_stock["avg_per_day"].sum():.2f} шт')
 
-        # === 9. Форматирование ===
+        # Форматирование
         logger.info("Форматирование Excel...")
 
         ws1 = writer.sheets['Повысить цену']
 
         # Лист 1
-        # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=Возвраты, 6=Прод/день, 7=Дней, 8=Повышение%
         apply_header_style(ws1, {1: 24, 2: 15, 3: 11, 4: 17, 5: 15, 6: 15, 7: 17, 8: 15})
         apply_data_style(ws1, float_cols=[6, 7], int_cols=[4, 5, 8])
         apply_hyperlinks(ws1, link_col=2)
@@ -401,13 +448,12 @@ def generate_report(
         apply_price_increase_colors(ws1, pct_col=8)
 
         # Лист 2
-        # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Прод/день
         apply_header_style(ws2, {1: 24, 2: 15, 3: 11, 4: 15})
         apply_data_style(ws2, float_cols=[4], int_cols=[])
         apply_hyperlinks(ws2, link_col=2)
         apply_group_colors(ws2, group_col=3)
 
-        # === 10. Аннотации под таблицами ===
+        # Аннотации под таблицами
         ws1_last = len(report_export) + 4
         ws1.cell(row=ws1_last, column=1, value='— Группы товаров —')
         ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день за 30д) → среднее по 7 дням')

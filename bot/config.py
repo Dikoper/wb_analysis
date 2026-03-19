@@ -32,3 +32,6 @@ LOG_RETENTION_DAYS = int(os.getenv('LOG_RETENTION_DAYS', '90'))
 # Пороги для групп товаров (шт/день)
 THRESHOLD_A = 4.0   # A: ≥4 (ходовые)
 THRESHOLD_B = 0.5   # B: ≥0.5, C: <0.5 (редкие)
+
+# Кэш данных API (минуты) — если данные свежее, повторный запрос к API не делается
+DATA_CACHE_TTL = int(os.getenv('DATA_CACHE_TTL', '30'))

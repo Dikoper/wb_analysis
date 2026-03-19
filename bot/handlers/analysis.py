@@ -16,8 +16,12 @@ from bot.keyboards import (
     MenuCB, StoreCB, NavCB,
     stores_list_kb, store_actions_kb, store_display_name,
 )
-from bot.db import get_stores, get_store, get_last_report, save_report_history, get_setting
-from bot.report import generate_report
+from bot.config import DATA_CACHE_TTL
+from bot.db import (
+    get_stores, get_store, get_last_report, save_report_history, get_setting,
+    save_product_data, get_latest_product_data, is_data_fresh,
+)
+from bot.report import fetch_store_data, generate_report_from_data
 from wb_api import WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -115,11 +119,25 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         days_threshold = int(await get_setting('calc_days_threshold', '7'))
         threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
+
+        # 1. Загрузка данных из API (или из кэша если свежие)
+        store_id = callback_data.store_id
+        if await is_data_fresh(store_id, DATA_CACHE_TTL):
+            logger.info(f"Данные для {name} свежие (кэш), пропускаем API")
+            product_rows, _ = await get_latest_product_data(store_id)
+        else:
+            product_rows = await asyncio.to_thread(
+                fetch_store_data, token=store['token'],
+                days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
+            )
+            await save_product_data(store_id, product_rows)
+
+        # 2. Генерация Excel из данных
         report_path = await asyncio.to_thread(
-            generate_report, token=store['token'], store_name=name,
+            generate_report_from_data, product_rows=product_rows, store_name=name,
             days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
         )
-        await save_report_history(callback_data.store_id, report_path)
+        await save_report_history(store_id, report_path)
 
         document = FSInputFile(report_path, filename=os.path.basename(report_path))
         await callback.message.answer_document(document, caption=f"📊 Отчёт для {name} готов!")

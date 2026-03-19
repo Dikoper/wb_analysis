@@ -13,10 +13,13 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
 
-from bot.config import TIMEZONE
-from bot.db import get_stores, get_setting, save_report_history, get_subscribers
+from bot.config import TIMEZONE, DATA_CACHE_TTL
+from bot.db import (
+    get_stores, get_setting, save_report_history, get_subscribers,
+    save_product_data, get_latest_product_data, is_data_fresh,
+)
 from bot.keyboards import store_display_name
-from bot.report import generate_report
+from bot.report import fetch_store_data, generate_report_from_data
 from wb_api import WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -74,8 +77,20 @@ async def send_daily_reports(bot: Bot):
     for store in stores:
         name = store_display_name(store)
         try:
+            # 1. Загрузка данных из API (или из кэша если свежие)
+            if await is_data_fresh(store['id'], DATA_CACHE_TTL):
+                logger.info(f"Данные для {name} свежие (кэш), пропускаем API")
+                product_rows, _ = await get_latest_product_data(store['id'])
+            else:
+                product_rows = await asyncio.to_thread(
+                    fetch_store_data, token=store['token'],
+                    days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
+                )
+                await save_product_data(store['id'], product_rows)
+
+            # 2. Генерация Excel из данных
             report_path = await asyncio.to_thread(
-                generate_report, token=store['token'], store_name=name,
+                generate_report_from_data, product_rows=product_rows, store_name=name,
                 days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
             )
             await save_report_history(store['id'], report_path)
