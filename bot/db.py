@@ -6,6 +6,8 @@ import os
 import logging
 import aiosqlite
 
+from bot.security import obfuscate_token, deobfuscate_token
+
 logger = logging.getLogger(__name__)
 
 DB_PATH = os.getenv('DB_PATH', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'bot.db'))
@@ -76,6 +78,15 @@ async def init_db():
             CREATE INDEX IF NOT EXISTS idx_product_data_store_date
                 ON product_data(store_id, fetched_at)
         ''')
+        await db.execute('''
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER,
+                action TEXT NOT NULL,
+                details TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+        ''')
         await db.commit()
 
     # Миграция: добавить marketplace_name если не существует
@@ -85,6 +96,16 @@ async def init_db():
             await db.commit()
     except Exception:
         pass  # Колонка уже существует
+
+    # Миграция: обфусцировать plaintext-токены (без префикса 'obf:')
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT id, token FROM stores WHERE token NOT LIKE 'obf:%'")
+        plain_rows = await cursor.fetchall()
+        for row_id, raw_token in plain_rows:
+            await db.execute('UPDATE stores SET token = ? WHERE id = ?', (obfuscate_token(raw_token), row_id))
+        if plain_rows:
+            await db.commit()
+            logger.info(f"Обфусцировано токенов: {len(plain_rows)}")
 
     # Автомиграция: если stores пуста и WB_TOKEN есть в env — добавляем
     wb_token = os.getenv('WB_TOKEN')
@@ -140,29 +161,34 @@ async def migrate_trademarks():
 # === Stores CRUD ===
 
 async def add_store(token: str, name: str = None) -> int:
-    """Добавляет магазин. Возвращает id."""
+    """Добавляет магазин. Токен обфусцируется перед сохранением."""
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             'INSERT INTO stores (token, name) VALUES (?, ?)',
-            (token, name)
+            (obfuscate_token(token), name)
         )
         await db.commit()
         return cursor.lastrowid
 
 
 async def get_stores() -> list:
-    """Возвращает список активных магазинов."""
+    """Возвращает список активных магазинов (токены деобфусцируются)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             'SELECT id, token, name, marketplace_name, added_at FROM stores WHERE is_active = 1'
         )
         rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            d = dict(row)
+            d['token'] = deobfuscate_token(d['token'])
+            result.append(d)
+        return result
 
 
 async def get_store(store_id: int) -> dict | None:
-    """Возвращает магазин по id."""
+    """Возвращает магазин по id (токен деобфусцируется)."""
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -170,13 +196,19 @@ async def get_store(store_id: int) -> dict | None:
             (store_id,)
         )
         row = await cursor.fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        d['token'] = deobfuscate_token(d['token'])
+        return d
 
 
 async def update_store(store_id: int, **kwargs):
-    """Обновляет поля магазина (name, token)."""
+    """Обновляет поля магазина (name, token, marketplace_name)."""
     allowed = {'name', 'token', 'marketplace_name'}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if 'token' in fields and fields['token']:
+        fields['token'] = obfuscate_token(fields['token'])
     if not fields:
         return
     set_clause = ', '.join(f'{k} = ?' for k in fields)
@@ -413,3 +445,15 @@ async def cleanup_old_product_data(days: int) -> int:
         )
         await db.commit()
         return cursor.rowcount
+
+
+# === Audit Log ===
+
+async def log_action(chat_id: int, action: str, details: str = None):
+    """Записывает действие в аудит-лог."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            'INSERT INTO audit_log (chat_id, action, details) VALUES (?, ?, ?)',
+            (chat_id, action, details)
+        )
+        await db.commit()

@@ -12,7 +12,8 @@ from aiogram.fsm.context import FSMContext
 
 from bot.config import BOT_PASSWORD
 from bot.keyboards import MenuCB, NavCB, main_menu_kb, store_display_name
-from bot.db import get_stores, get_last_report, get_setting, is_subscriber, is_authorized, authorize_user
+from bot.db import get_stores, get_last_report, get_setting, is_subscriber, is_authorized, authorize_user, log_action
+from bot.security import verify_password
 from bot.states import MenuStates
 
 _MSK = timezone(timedelta(hours=3))
@@ -95,8 +96,9 @@ async def process_password(message: Message, state: FSMContext, bot: Bot):
     except Exception:
         pass
 
-    if password == BOT_PASSWORD:
+    if verify_password(password, BOT_PASSWORD):
         await authorize_user(message.from_user.id)
+        await log_action(message.from_user.id, 'auth_ok', f'@{message.from_user.username}')
         logger.info(
             f"User {message.from_user.id} (@{message.from_user.username}) authorized successfully"
         )
@@ -107,6 +109,7 @@ async def process_password(message: Message, state: FSMContext, bot: Bot):
         )
         await _send_main_menu(message)
     else:
+        await log_action(message.from_user.id, 'auth_fail', f'@{message.from_user.username}')
         logger.warning(
             f"Failed auth attempt from user {message.from_user.id} (@{message.from_user.username})"
         )

@@ -14,7 +14,7 @@ from bot.keyboards import (
     store_management_kb, confirm_delete_kb, cancel_kb, store_display_name,
 )
 from bot.states import MenuStates
-from bot.db import get_stores, get_store, add_store, update_store, delete_store
+from bot.db import get_stores, get_store, add_store, update_store, delete_store, log_action
 from wb_api import get_seller_info, WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -126,6 +126,7 @@ async def process_store_token(message: Message, state: FSMContext, bot: Bot):
         "🏪 <b>Управление магазинами</b>",
         reply_markup=store_management_kb(stores)
     )
+    await log_action(message.from_user.id, 'store_add', f'{name} (ID: {store_id})')
     logger.info(f"Добавлен магазин: {name} (ID: {store_id})")
 
 
@@ -243,4 +244,5 @@ async def confirm_delete_store(callback: CallbackQuery, callback_data: StoreCB):
         parse_mode="HTML"
     )
     await callback.answer()
+    await log_action(callback.from_user.id, 'store_delete', f'{name} (ID: {callback_data.store_id})')
     logger.info(f"Магазин #{callback_data.store_id} ({name}) удалён")

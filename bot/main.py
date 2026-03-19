@@ -19,6 +19,7 @@ from bot.handlers.feedback import cleanup_old_feedback
 from bot.db import init_db, cleanup_old_reports, cleanup_old_product_data, migrate_trademarks
 from bot.middleware import AuthMiddleware
 from bot.scheduler import setup_scheduler
+from bot.security import TokenMaskFilter
 
 # Создаём директорию для логов
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -39,6 +40,8 @@ logging.basicConfig(
         _log_handler,
     ]
 )
+# Фильтр маскировки токенов во всех логах
+logging.getLogger().addFilter(TokenMaskFilter())
 logger = logging.getLogger(__name__)
 
 

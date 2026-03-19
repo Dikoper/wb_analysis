@@ -19,7 +19,7 @@ from bot.keyboards import (
 from bot.config import DATA_CACHE_TTL
 from bot.db import (
     get_stores, get_store, get_last_report, save_report_history, get_setting,
-    save_product_data, get_latest_product_data, is_data_fresh,
+    save_product_data, get_latest_product_data, is_data_fresh, log_action,
 )
 from bot.report import fetch_store_data, generate_report_from_data
 from wb_api import WBTokenError
@@ -141,6 +141,7 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
 
         document = FSInputFile(report_path, filename=os.path.basename(report_path))
         await callback.message.answer_document(document, caption=f"📊 Отчёт для {name} готов!")
+        await log_action(callback.from_user.id, 'report_gen', f'store={name}')
 
     except WBTokenError as e:
         await callback.message.edit_text(
