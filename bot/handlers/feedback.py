@@ -4,6 +4,7 @@
 
 import os
 import csv
+import asyncio
 import logging
 from datetime import datetime
 
@@ -44,8 +45,8 @@ def cleanup_old_feedback():
             logger.info(f"Удалён устаревший файл фидбека: {fname}")
 
 
-def save_feedback(emoji: str = '', comment: str = ''):
-    """Сохраняет фидбек в файл текущего месяца."""
+def _save_feedback_sync(emoji: str = '', comment: str = ''):
+    """Синхронная запись фидбека (вызывается через asyncio.to_thread)."""
     os.makedirs(FEEDBACK_DIR, exist_ok=True)
     feedback_file = _feedback_filename()
     file_exists = os.path.exists(feedback_file)
@@ -56,10 +57,15 @@ def save_feedback(emoji: str = '', comment: str = ''):
         writer.writerow([datetime.now().strftime('%Y-%m-%d %H:%M'), emoji, comment])
 
 
+async def save_feedback(emoji: str = '', comment: str = ''):
+    """Сохраняет фидбек в файл текущего месяца (не блокирует event loop)."""
+    await asyncio.to_thread(_save_feedback_sync, emoji, comment)
+
+
 @router.message(F.text.in_(FEEDBACK_EMOJIS))
 async def handle_emoji_feedback(message: Message):
     """Обработчик эмодзи-реакций."""
-    save_feedback(emoji=message.text)
+    await save_feedback(emoji=message.text)
     await message.answer("✅ Фидбек сохранён!", reply_markup=back_to_menu_kb())
 
 
@@ -68,5 +74,5 @@ async def handle_text_feedback(message: Message):
     """Обработчик текстовых комментариев (catch-all)."""
     if message.text.startswith('/'):
         return
-    save_feedback(comment=message.text)
+    await save_feedback(comment=message.text)
     await message.answer("✅ Комментарий сохранён!", reply_markup=back_to_menu_kb())

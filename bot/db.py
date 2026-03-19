@@ -3,6 +3,7 @@
 """
 
 import os
+import time
 import logging
 import aiosqlite
 
@@ -78,11 +79,19 @@ async def _run_migrations(db):
     await db.commit()
 
 
+async def _connect():
+    """Подключение к БД с включёнными foreign keys."""
+    db = await aiosqlite.connect(DB_PATH)
+    await db.execute('PRAGMA foreign_keys = ON')
+    return db
+
+
 async def init_db():
     """Создаёт таблицы если не существуют. Автомигрирует WB_TOKEN из env."""
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute('PRAGMA foreign_keys = ON')
         await db.execute('''
             CREATE TABLE IF NOT EXISTS stores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -332,6 +341,8 @@ async def get_last_report(store_id: int) -> dict | None:
 
 async def cleanup_old_reports(days: int) -> int:
     """Удаляет отчёты старше days дней из БД и с диска. Возвращает кол-во удалённых."""
+    import asyncio
+
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
@@ -343,8 +354,9 @@ async def cleanup_old_reports(days: int) -> int:
 
         deleted = 0
         for row in rows:
-            if row['file_path'] and os.path.exists(row['file_path']):
-                os.remove(row['file_path'])
+            fp = row['file_path']
+            if fp and await asyncio.to_thread(os.path.exists, fp):
+                await asyncio.to_thread(os.remove, fp)
             await db.execute('DELETE FROM report_history WHERE id = ?', (row['id'],))
             deleted += 1
 
@@ -396,18 +408,23 @@ async def is_subscriber(chat_id: int) -> bool:
 
 _authorized_cache: set[int] = set()
 _auth_cache_loaded = False
+_auth_cache_ts: float = 0
+_AUTH_CACHE_TTL = 300  # перезагрузка кэша каждые 5 минут
 
 
 async def _ensure_auth_cache():
-    """Загружает кэш авторизованных пользователей из БД (один раз)."""
-    global _auth_cache_loaded
-    if _auth_cache_loaded:
+    """Загружает кэш авторизованных пользователей из БД (с TTL)."""
+    global _auth_cache_loaded, _auth_cache_ts
+    now = time.monotonic()
+    if _auth_cache_loaded and (now - _auth_cache_ts < _AUTH_CACHE_TTL):
         return
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute('SELECT chat_id FROM authorized_users')
         rows = await cursor.fetchall()
+        _authorized_cache.clear()
         _authorized_cache.update(row[0] for row in rows)
     _auth_cache_loaded = True
+    _auth_cache_ts = now
 
 
 async def is_authorized(chat_id: int) -> bool:

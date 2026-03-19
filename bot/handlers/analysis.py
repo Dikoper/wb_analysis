@@ -5,18 +5,16 @@
 import os
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile
-
-_MSK = timezone(timedelta(hours=3))
 
 from bot.keyboards import (
     MenuCB, StoreCB, NavCB,
     stores_list_kb, store_actions_kb, store_display_name, back_to_menu_kb,
 )
-from bot.config import DATA_CACHE_TTL
+from bot.config import DATA_CACHE_TTL, MSK_TZ
 from bot.db import (
     get_stores, get_store, get_last_report, save_report_history, get_setting,
     save_product_data, get_latest_product_data, is_data_fresh, log_action,
@@ -67,7 +65,7 @@ async def store_selected(callback: CallbackQuery, callback_data: StoreCB):
         try:
             raw = last_report['created_at'][:16].replace('T', ' ')
             utc_dt = datetime.strptime(raw, '%Y-%m-%d %H:%M').replace(tzinfo=timezone.utc)
-            last_time = utc_dt.astimezone(_MSK).strftime('%d.%m %H:%M')
+            last_time = utc_dt.astimezone(MSK_TZ).strftime('%d.%m %H:%M')
         except Exception:
             last_time = last_report['created_at'][:16]
 
