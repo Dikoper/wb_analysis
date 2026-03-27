@@ -1004,6 +1004,12 @@ def generate_summary_report(
             c.alignment = wrap_left
             c.border = _group_border(is_top, is_bottom, 9)
 
+            # Автоматический подбор высоты ячейки для читаемости
+            # Подсчитываем количество строк в компактной строке (разделены |)
+            num_lines = compact.count('|') + 1 if compact != "—" else 1
+            row_height = max(18, 14 + num_lines * 10)
+            ws.row_dimensions[row_num].height = row_height
+
             # Фон чередования
             if group_bg:
                 for col in range(2, num_cols + 1):
