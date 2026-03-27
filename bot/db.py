@@ -44,10 +44,28 @@ async def _migrate_product_price(db):
     await _migrate_add_column_safe(db, 'product_data', 'price', 'REAL')
 
 
+async def _migrate_warehouse_stocks(db):
+    await db.execute('''
+        CREATE TABLE IF NOT EXISTS warehouse_stocks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            store_id INTEGER REFERENCES stores(id),
+            nm_id INTEGER NOT NULL,
+            warehouse_name TEXT NOT NULL,
+            quantity INTEGER DEFAULT 0,
+            fetched_at TEXT DEFAULT (datetime('now'))
+        )
+    ''')
+    await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_warehouse_stocks_store_date
+            ON warehouse_stocks(store_id, fetched_at)
+    ''')
+
+
 MIGRATIONS = [
     (1, _migrate_marketplace_name),
     (2, _migrate_obfuscate_tokens),
     (3, _migrate_product_price),
+    (4, _migrate_warehouse_stocks),
 ]
 
 
@@ -521,6 +539,55 @@ async def cleanup_old_product_data(days: int) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute(
             "DELETE FROM product_data WHERE fetched_at < datetime('now', ?)",
+            (f'-{days} days',)
+        )
+        await db.commit()
+        return cursor.rowcount
+
+
+# === Warehouse Stocks (детализация по складам) ===
+
+async def save_warehouse_data(store_id: int, rows: list[dict]):
+    """Сохраняет снимок остатков по складам для магазина."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        for row in rows:
+            await db.execute(
+                '''INSERT INTO warehouse_stocks
+                   (store_id, nm_id, warehouse_name, quantity)
+                   VALUES (?, ?, ?, ?)''',
+                (store_id, row['nm_id'], row.get('warehouse_name', ''),
+                 row.get('quantity', 0))
+            )
+        await db.commit()
+
+
+async def get_latest_warehouse_data(store_id: int) -> list[dict]:
+    """Возвращает последний снимок остатков по складам для магазина."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            'SELECT fetched_at FROM warehouse_stocks WHERE store_id = ? '
+            'ORDER BY fetched_at DESC LIMIT 1',
+            (store_id,)
+        )
+        ts_row = await cursor.fetchone()
+        if not ts_row:
+            return []
+
+        fetched_at = ts_row[0]
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            'SELECT nm_id, warehouse_name, quantity FROM warehouse_stocks '
+            'WHERE store_id = ? AND fetched_at = ?',
+            (store_id, fetched_at)
+        )
+        return [dict(r) for r in await cursor.fetchall()]
+
+
+async def cleanup_old_warehouse_data(days: int) -> int:
+    """Удаляет данные по складам старше days дней."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "DELETE FROM warehouse_stocks WHERE fetched_at < datetime('now', ?)",
             (f'-{days} days',)
         )
         await db.commit()

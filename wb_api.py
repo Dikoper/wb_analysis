@@ -191,6 +191,48 @@ def get_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
     return grouped
 
 
+def get_stocks_detailed(nm_ids: list = None, token: str = None) -> pd.DataFrame:
+    """
+    Получает остатки по складам БЕЗ группировки — сохраняет детализацию по каждому складу.
+
+    Args:
+        nm_ids: список nmId для фильтрации (если None — все)
+        token: токен WB API (если None — из переменной окружения)
+
+    Returns:
+        DataFrame с колонками:
+        - nmId: ID товара
+        - warehouseName: название склада
+        - quantity: остаток на складе
+        - inWayFromClient: товары в возврате
+    """
+    if token is None:
+        token = get_token()
+    date_from = '2020-01-01'
+
+    url = f"{API_STOCKS}?dateFrom={date_from}"
+    data = fetch_with_retry(url, token)
+
+    if not data:
+        return pd.DataFrame(columns=['nmId', 'warehouseName', 'quantity', 'inWayFromClient'])
+
+    df = pd.DataFrame(data)
+
+    if nm_ids is not None:
+        df = df[df['nmId'].isin(nm_ids)]
+
+    if 'inWayFromClient' not in df.columns:
+        df['inWayFromClient'] = 0
+
+    # Сохраняем только нужные колонки, не группируем
+    cols = ['nmId', 'warehouseName', 'quantity', 'inWayFromClient']
+    for c in cols:
+        if c not in df.columns:
+            df[c] = '' if c == 'warehouseName' else 0
+
+    return df[cols].reset_index(drop=True)
+
+
 def get_prices(nm_ids: list = None, token: str = None) -> dict:
     """
     Получает цены товаров (после скидки) через Prices API.

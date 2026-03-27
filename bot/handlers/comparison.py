@@ -1,5 +1,5 @@
 """
-Сравнение магазинов: выбор двух магазинов, генерация сравнительного отчёта.
+Сравнение магазинов: подменю режимов, сравнение пары, сводный отчёт.
 """
 
 import os
@@ -11,17 +11,21 @@ from aiogram.types import CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 
 from bot.keyboards import (
-    MenuCB, CompareCB, NavCB,
-    compare_stores_kb, store_display_name, back_to_menu_kb,
+    MenuCB, CompareCB, CompareModeCB, NavCB,
+    comparison_mode_kb, compare_stores_kb, store_display_name, back_to_menu_kb,
 )
 from bot.states import MenuStates
 from bot.config import DATA_CACHE_TTL
 from bot.db import (
     get_stores, get_store, get_setting,
     save_product_data, get_latest_product_data, is_data_fresh,
+    save_warehouse_data, get_latest_warehouse_data,
     save_report_history, log_action,
 )
-from bot.report import fetch_store_data, generate_comparison_report
+from bot.report import (
+    fetch_store_data, fetch_warehouse_data,
+    generate_comparison_report, generate_summary_report,
+)
 from wb_api import WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -29,9 +33,11 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# ── Подменю сравнения ────────────────────────────────────────────────────────
+
 @router.callback_query(MenuCB.filter(F.action == "comparison"))
 async def start_comparison(callback: CallbackQuery, state: FSMContext):
-    """Начало сравнения: показать список магазинов для первого выбора."""
+    """Показать подменю: Сравнение пары / Сводный отчёт."""
     stores = await get_stores()
     if len(stores) < 2:
         await callback.answer(
@@ -42,6 +48,26 @@ async def start_comparison(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         "🔀 <b>Сравнение магазинов</b>\n\n"
+        "Выберите режим:",
+        reply_markup=comparison_mode_kb(),
+        parse_mode="HTML",
+    )
+    await state.set_state(MenuStates.comparison_mode)
+    await callback.answer()
+
+
+# ── Сравнение пары ───────────────────────────────────────────────────────────
+
+@router.callback_query(
+    CompareModeCB.filter(F.action == "pair"),
+    MenuStates.comparison_mode,
+)
+async def start_pair_comparison(callback: CallbackQuery, state: FSMContext):
+    """Режим сравнения пары: показать список магазинов для первого выбора."""
+    stores = await get_stores()
+
+    await callback.message.edit_text(
+        "🔀 <b>Сравнение пары</b>\n\n"
         "Выберите <b>первый</b> магазин:",
         reply_markup=compare_stores_kb(stores, action="select_first"),
         parse_mode="HTML",
@@ -66,7 +92,7 @@ async def select_first(callback: CallbackQuery, callback_data: CompareCB, state:
     stores = await get_stores()
     name = store_display_name(store)
     await callback.message.edit_text(
-        f"🔀 <b>Сравнение магазинов</b>\n\n"
+        f"🔀 <b>Сравнение пары</b>\n\n"
         f"Первый: <b>{name}</b>\n"
         f"Выберите <b>второй</b> магазин:",
         reply_markup=compare_stores_kb(stores, action="select_second", exclude_id=callback_data.store_id),
@@ -109,24 +135,9 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
         threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
 
-        # Загрузка данных обоих магазинов
-        async def fetch_or_cache(store_id, token, store_name, step_label):
-            if await is_data_fresh(store_id, DATA_CACHE_TTL):
-                rows, _ = await get_latest_product_data(store_id)
-                return rows
-            rows = await asyncio.to_thread(
-                fetch_store_data, token=token,
-                days_threshold=days_threshold,
-                threshold_a=threshold_a,
-                threshold_b=threshold_b,
-            )
-            await save_product_data(store_id, rows)
-            return rows
-
-        # Параллельная загрузка если оба не в кэше
         data1, data2 = await asyncio.gather(
-            fetch_or_cache(store1_id, store1['token'], name1, "1"),
-            fetch_or_cache(store2_id, store2['token'], name2, "2"),
+            _fetch_or_cache(store1_id, store1['token'], days_threshold, threshold_a, threshold_b),
+            _fetch_or_cache(store2_id, store2['token'], days_threshold, threshold_a, threshold_b),
         )
 
         await progress_msg.edit_text(
@@ -135,7 +146,6 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
             parse_mode="HTML",
         )
 
-        # Генерация сравнительного отчёта
         report_path = await asyncio.to_thread(
             generate_comparison_report,
             store1_data=data1, store2_data=data2,
@@ -155,7 +165,6 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
 
         await save_report_history(store1_id, report_path)
 
-        # Удаляем прогресс-сообщение, отправляем файл с кнопкой
         try:
             await progress_msg.delete()
         except Exception:
@@ -181,3 +190,136 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
             f"❌ Ошибка сравнения:\n{e}",
             reply_markup=back_to_menu_kb(),
         )
+
+
+# ── Сводный отчёт ────────────────────────────────────────────────────────────
+
+@router.callback_query(
+    CompareModeCB.filter(F.action == "summary"),
+    MenuStates.comparison_mode,
+)
+async def start_summary_report(callback: CallbackQuery, state: FSMContext):
+    """Сводный отчёт по всем магазинам."""
+    stores = await get_stores()
+    if len(stores) < 2:
+        await callback.answer(
+            "Для сводного отчёта нужно минимум 2 магазина.",
+            show_alert=True,
+        )
+        return
+
+    store_names = [store_display_name(s) for s in stores]
+    progress_msg = callback.message
+    await progress_msg.edit_text(
+        "📋 <b>Сводный отчёт</b>\n\n"
+        f"Магазинов: {len(stores)}\n"
+        "1/3 · Загрузка данных из WB API...",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    await state.clear()
+
+    try:
+        days_threshold = int(await get_setting('calc_days_threshold', '7'))
+        threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
+        threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
+
+        # Параллельная загрузка данных всех магазинов
+        product_tasks = []
+        warehouse_tasks = []
+        for s in stores:
+            product_tasks.append(
+                _fetch_or_cache(s['id'], s['token'], days_threshold, threshold_a, threshold_b)
+            )
+            warehouse_tasks.append(
+                _fetch_or_cache_warehouse(s['id'], s['token'])
+            )
+
+        all_product_results = await asyncio.gather(*product_tasks)
+        all_warehouse_results = await asyncio.gather(*warehouse_tasks)
+
+        # Собираем dict {store_name: data}
+        all_stores_data = {}
+        all_warehouse_data = {}
+        for i, s in enumerate(stores):
+            name = store_display_name(s)
+            all_stores_data[name] = all_product_results[i]
+            all_warehouse_data[name] = all_warehouse_results[i]
+
+        await progress_msg.edit_text(
+            "📋 <b>Сводный отчёт</b>\n\n"
+            "2/3 · Данные загружены. Формирование Excel...",
+            parse_mode="HTML",
+        )
+
+        report_path = await asyncio.to_thread(
+            generate_summary_report,
+            all_stores_data=all_stores_data,
+            all_warehouse_data=all_warehouse_data,
+            days_threshold=days_threshold,
+            threshold_a=threshold_a,
+            threshold_b=threshold_b,
+        )
+
+        if report_path is None:
+            await progress_msg.edit_text(
+                "📋 <b>Сводный отчёт</b>\n\n"
+                "Нет артикулов, присутствующих в 2+ магазинах.",
+                reply_markup=back_to_menu_kb(),
+                parse_mode="HTML",
+            )
+            return
+
+        try:
+            await progress_msg.delete()
+        except Exception:
+            pass
+        document = FSInputFile(report_path, filename=os.path.basename(report_path))
+        await callback.message.answer_document(
+            document,
+            caption=f"✅ Сводный отчёт ({len(stores)} магазинов)",
+            reply_markup=back_to_menu_kb(),
+        )
+        await log_action(callback.from_user.id, 'summary_report', f'{len(stores)} магазинов')
+
+    except WBTokenError as e:
+        await progress_msg.edit_text(
+            f"🔑 <b>Ошибка токена</b>\n\n{e}\n\n"
+            "Обновите токен: ⚙️ Настройки → Управление магазинами",
+            reply_markup=back_to_menu_kb(),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Ошибка сводного отчёта: {e}", exc_info=True)
+        await progress_msg.edit_text(
+            f"❌ Ошибка сводного отчёта:\n{e}",
+            reply_markup=back_to_menu_kb(),
+        )
+
+
+# ── Утилиты ──────────────────────────────────────────────────────────────────
+
+async def _fetch_or_cache(store_id, token, days_threshold, threshold_a, threshold_b):
+    """Загружает данные товаров из кэша или API."""
+    if await is_data_fresh(store_id, DATA_CACHE_TTL):
+        rows, _ = await get_latest_product_data(store_id)
+        return rows
+    rows = await asyncio.to_thread(
+        fetch_store_data, token=token,
+        days_threshold=days_threshold,
+        threshold_a=threshold_a,
+        threshold_b=threshold_b,
+    )
+    await save_product_data(store_id, rows)
+    return rows
+
+
+async def _fetch_or_cache_warehouse(store_id, token):
+    """Загружает данные по складам из кэша или API."""
+    if await is_data_fresh(store_id, DATA_CACHE_TTL):
+        wh_data = await get_latest_warehouse_data(store_id)
+        if wh_data:
+            return wh_data
+    wh_data = await asyncio.to_thread(fetch_warehouse_data, token=token)
+    await save_warehouse_data(store_id, wh_data)
+    return wh_data

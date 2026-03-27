@@ -24,7 +24,7 @@ from openpyxl.utils import get_column_letter
 # Настройка логирования
 logger = logging.getLogger(__name__)
 
-from wb_api import get_orders, get_stocks, get_prices, merge_orders_stocks, calc_avg_per_day
+from wb_api import get_orders, get_stocks, get_stocks_detailed, get_prices, merge_orders_stocks, calc_avg_per_day
 from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
 
 # ── Цветовые константы ────────────────────────────────────────────────────────
@@ -486,6 +486,60 @@ def generate_report_from_data(
     return output_path
 
 
+# ── Общие утилиты для сравнительных отчётов ───────────────────────────────────
+
+def aggregate_by_article(rows: list[dict]) -> dict:
+    """
+    Группировка товаров по supplier_article с агрегацией дублей.
+
+    Returns:
+        dict {supplier_article: aggregated_row}
+    """
+    result = {}
+    for r in rows:
+        art = r.get('supplier_article')
+        if not art:
+            continue
+        if art not in result:
+            result[art] = r.copy()
+        else:
+            existing = result[art]
+            existing['stock_qty'] = existing.get('stock_qty', 0) + r.get('stock_qty', 0)
+            existing['stock_qty_clean'] = existing.get('stock_qty_clean', 0) + r.get('stock_qty_clean', 0)
+            existing['avg_per_day'] = (existing.get('avg_per_day') or 0) + (r.get('avg_per_day') or 0)
+            if (r.get('avg_per_day') or 0) > (existing.get('_max_avg') or 0):
+                existing['_max_avg'] = r.get('avg_per_day') or 0
+                existing['nm_id'] = r.get('nm_id')
+                existing['price'] = r.get('price')
+
+    for item in result.values():
+        avg = item.get('avg_per_day') or 0
+        item['days_remaining'] = (item['stock_qty'] / avg) if avg > 0 else None
+        item['product_group'] = assign_group(avg)
+        item.pop('_max_avg', None)
+    return result
+
+
+def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
+    """
+    Загружает детализацию остатков по складам из WB API.
+
+    Returns:
+        Список словарей {nm_id, warehouse_name, quantity}
+    """
+    df = get_stocks_detailed(nm_ids=nm_ids, token=token)
+    if df.empty:
+        return []
+    return [
+        {
+            'nm_id': int(row['nmId']),
+            'warehouse_name': row['warehouseName'],
+            'quantity': int(row['quantity']),
+        }
+        for _, row in df.iterrows()
+    ]
+
+
 # ── Сравнительный отчёт ──────────────────────────────────────────────────────
 
 # Цвета рекомендаций сравнения
@@ -515,35 +569,6 @@ def generate_comparison_report(
     from openpyxl import Workbook
 
     logger.info(f"=== Сравнительный отчёт: {store1_name} vs {store2_name} ===")
-
-    # Группировка по supplier_article (агрегация дублей)
-    def aggregate_by_article(rows: list[dict]) -> dict:
-        result = {}
-        for r in rows:
-            art = r.get('supplier_article')
-            if not art:
-                continue
-            if art not in result:
-                result[art] = r.copy()
-            else:
-                # Суммируем остатки и продажи по всем nmId одного артикула
-                existing = result[art]
-                existing['stock_qty'] = existing.get('stock_qty', 0) + r.get('stock_qty', 0)
-                existing['stock_qty_clean'] = existing.get('stock_qty_clean', 0) + r.get('stock_qty_clean', 0)
-                existing['avg_per_day'] = (existing.get('avg_per_day') or 0) + (r.get('avg_per_day') or 0)
-                # nm_id / price — берём от варианта с наибольшими продажами
-                if (r.get('avg_per_day') or 0) > (existing.get('_max_avg') or 0):
-                    existing['_max_avg'] = r.get('avg_per_day') or 0
-                    existing['nm_id'] = r.get('nm_id')
-                    existing['price'] = r.get('price')
-
-        # Пересчитываем days_remaining и группу после агрегации
-        for item in result.values():
-            avg = item.get('avg_per_day') or 0
-            item['days_remaining'] = (item['stock_qty'] / avg) if avg > 0 else None
-            item['product_group'] = assign_group(avg)
-            item.pop('_max_avg', None)
-        return result
 
     agg1 = aggregate_by_article(store1_data)
     agg2 = aggregate_by_article(store2_data)
@@ -768,4 +793,275 @@ def generate_comparison_report(
 
     wb.save(output_path)
     logger.info(f"✓ Сравнительный отчёт: {output_path}")
+    return output_path
+
+
+# ── Сводный отчёт по всем магазинам ──────────────────────────────────────────
+
+SUMMARY_PAIR_ALT_BG = "F5F5F5"
+
+
+def generate_summary_report(
+    all_stores_data: dict,
+    all_warehouse_data: dict,
+    days_threshold: int = 7,
+    threshold_a: float = THRESHOLD_A,
+    threshold_b: float = THRESHOLD_B,
+) -> str | None:
+    """
+    Генерирует сводный Excel-отчёт по всем магазинам.
+
+    Показывает только товары (по supplier_article), присутствующие в 2+ магазинах.
+    Вместо рекомендации — детализация остатков по складам.
+
+    Args:
+        all_stores_data: {store_name: [product_rows]}
+        all_warehouse_data: {store_name: [{nm_id, warehouse_name, quantity}]}
+
+    Returns:
+        Путь к файлу или None если нет совпадающих позиций.
+    """
+    from openpyxl import Workbook
+    from openpyxl.comments import Comment
+
+    logger.info(f"=== Сводный отчёт: {len(all_stores_data)} магазинов ===")
+
+    # Агрегация по артикулу для каждого магазина
+    aggregated = {}
+    for store_name, rows in all_stores_data.items():
+        aggregated[store_name] = aggregate_by_article(rows)
+
+    # Построение индекса складов: {store_name: {nm_id: [{warehouse_name, quantity}]}}
+    wh_index = {}
+    for store_name, wh_rows in all_warehouse_data.items():
+        store_wh = {}
+        for wr in wh_rows:
+            nm_id = wr['nm_id']
+            if nm_id not in store_wh:
+                store_wh[nm_id] = []
+            store_wh[nm_id].append({
+                'warehouse_name': wr['warehouse_name'],
+                'quantity': wr['quantity'],
+            })
+        wh_index[store_name] = store_wh
+
+    # Найти артикулы, присутствующие в 2+ магазинах
+    article_stores = {}  # {article: [store_name, ...]}
+    for store_name, agg in aggregated.items():
+        for article in agg:
+            article_stores.setdefault(article, []).append(store_name)
+
+    common_articles = sorted([
+        art for art, stores in article_stores.items() if len(stores) >= 2
+    ])
+
+    logger.info(f"Артикулов в 2+ магазинах: {len(common_articles)}")
+
+    if not common_articles:
+        return None
+
+    # Создаём Excel
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Сводный отчёт"
+
+    # Шапка
+    headers = ['Артикул', 'Магазин', 'ID (WB)', 'Остаток', 'Дней осталось',
+               'Продаж/день', 'Группа', 'Цена ₽', 'Остатки по складам']
+    col_widths = {1: 22, 2: 24, 3: 15, 4: 12, 5: 16, 6: 15, 7: 11, 8: 13, 9: 36}
+
+    header_font = Font(name="Arial", size=11, bold=True, color=HEADER_FG)
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = _fill(HEADER_BG)
+        cell.alignment = header_align
+        cell.border = _thin_border("444444")
+
+    ws.freeze_panes = "A2"
+    for col_num, width in col_widths.items():
+        ws.column_dimensions[get_column_letter(col_num)].width = width
+    ws.row_dimensions[1].height = 34
+
+    # Стили данных
+    data_font = Font(name="Arial", size=10, color="1A1A2E")
+    center = Alignment(horizontal="center", vertical="center")
+    left = Alignment(horizontal="left", vertical="center")
+    wrap_left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    hyperlink_font = Font(name="Arial", size=10, color="1155CC", underline="single")
+    inner_thin = Side(style="thin", color="CCCCCC")
+    group_thick = Side(style="medium", color="888888")
+
+    num_cols = len(headers)
+
+    def _group_border(is_top, is_bottom, col_idx):
+        """Рамка ячейки внутри группы (N строк): толстая сверху/снизу группы."""
+        top = group_thick if is_top else inner_thin
+        bottom = group_thick if is_bottom else inner_thin
+        l = group_thick if col_idx == 1 else inner_thin
+        r = group_thick if col_idx == num_cols else inner_thin
+        return Border(left=l, right=r, top=top, bottom=bottom)
+
+    current_row = 2
+
+    for group_idx, article in enumerate(common_articles):
+        stores_with_article = article_stores[article]
+        group_size = len(stores_with_article)
+        group_start = current_row
+
+        # Чередование фона
+        group_bg = SUMMARY_PAIR_ALT_BG if group_idx % 2 == 1 else None
+
+        for store_idx, store_name in enumerate(stores_with_article):
+            row_num = current_row
+            is_top = (store_idx == 0)
+            is_bottom = (store_idx == group_size - 1)
+            store_data = aggregated[store_name][article]
+
+            ws.row_dimensions[row_num].height = 18
+
+            # B: Магазин
+            c = ws.cell(row=row_num, column=2, value=store_name)
+            c.font = data_font
+            c.alignment = left
+            c.border = _group_border(is_top, is_bottom, 2)
+
+            # C: ID (WB) — гиперссылка
+            nm_id = store_data.get('nm_id')
+            c = ws.cell(row=row_num, column=3, value=nm_id)
+            if nm_id:
+                c.hyperlink = WB_CABINET_URL.format(nm_id)
+                c.font = hyperlink_font
+            else:
+                c.font = data_font
+            c.alignment = center
+            c.border = _group_border(is_top, is_bottom, 3)
+
+            # D: Остаток + комментарий с детализацией по складам
+            stock_val = store_data.get('stock_qty', 0)
+            c = ws.cell(row=row_num, column=4, value=stock_val)
+            c.font = data_font
+            c.alignment = center
+            c.border = _group_border(is_top, is_bottom, 4)
+            c.number_format = "0"
+
+            # Комментарий к остатку: детализация по складам
+            wh_list = wh_index.get(store_name, {}).get(nm_id, [])
+            wh_list = [w for w in wh_list if w['quantity'] > 0]
+            wh_list.sort(key=lambda w: w['quantity'], reverse=True)
+            if wh_list:
+                detailed = "\n".join(f"{w['warehouse_name']}: {w['quantity']} шт" for w in wh_list)
+                comment_text = f"Остатки по складам:\n{detailed}\n\nИтого: {sum(w['quantity'] for w in wh_list)} шт"
+                comment = Comment(comment_text, "WB Analiz")
+                comment.width = 300
+                comment.height = max(80, len(wh_list) * 20)
+                c.comment = comment
+
+            # E: Дней осталось
+            dr = store_data.get('days_remaining')
+            c = ws.cell(row=row_num, column=5, value=dr)
+            c.font = data_font
+            c.alignment = center
+            c.border = _group_border(is_top, is_bottom, 5)
+            if dr is not None:
+                c.number_format = "0.0"
+
+            # F: Продаж/день
+            c = ws.cell(row=row_num, column=6, value=store_data.get('avg_per_day', 0))
+            c.font = data_font
+            c.alignment = center
+            c.border = _group_border(is_top, is_bottom, 6)
+            c.number_format = "0.00"
+
+            # G: Группа
+            group = store_data.get('product_group', '')
+            c = ws.cell(row=row_num, column=7, value=group)
+            c.font = Font(name="Arial", size=10, bold=True, color="1A1A2E")
+            c.alignment = center
+            c.border = _group_border(is_top, is_bottom, 7)
+            if group in GROUP_COLORS:
+                c.fill = _fill(GROUP_COLORS[group])
+
+            # H: Цена
+            price = store_data.get('price')
+            c = ws.cell(row=row_num, column=8, value=price)
+            c.font = data_font
+            c.alignment = center
+            c.border = _group_border(is_top, is_bottom, 8)
+            if price is not None:
+                c.number_format = "0.00"
+
+            # I: Остатки по складам — компактная строка
+            if wh_list:
+                compact = " | ".join(f"{w['warehouse_name']}: {w['quantity']}" for w in wh_list)
+            else:
+                compact = "—"
+
+            c = ws.cell(row=row_num, column=9, value=compact)
+            c.font = Font(name="Arial", size=9, color="555555")
+            c.alignment = wrap_left
+            c.border = _group_border(is_top, is_bottom, 9)
+
+            # Фон чередования
+            if group_bg:
+                for col in range(2, num_cols + 1):
+                    existing = ws.cell(row=row_num, column=col)
+                    if existing.fill == PatternFill():
+                        existing.fill = _fill(group_bg)
+
+            current_row += 1
+
+        # A: Артикул (merged) с толстой рамкой
+        if group_size > 1:
+            ws.merge_cells(
+                start_row=group_start, start_column=1,
+                end_row=group_start + group_size - 1, end_column=1,
+            )
+        c = ws.cell(row=group_start, column=1, value=article)
+        c.font = Font(name="Arial", size=10, bold=True, color="1A1A2E")
+        c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        c.border = Border(left=group_thick, right=inner_thin, top=group_thick, bottom=group_thick)
+        # Нижняя ячейка merged-области
+        if group_size > 1:
+            ws.cell(row=group_start + group_size - 1, column=1).border = Border(
+                left=group_thick, right=inner_thin, top=inner_thin, bottom=group_thick,
+            )
+
+    # Итоги
+    summary_row = current_row + 1
+    summary_font = Font(name="Arial", size=9, bold=True, color="555555")
+    total_articles = len(common_articles)
+    total_stores = len(all_stores_data)
+
+    ws.cell(row=summary_row, column=1,
+            value=f"Общих позиций (в 2+ магазинах): {total_articles}").font = summary_font
+    ws.cell(row=summary_row + 1, column=1,
+            value=f"Магазинов в отчёте: {total_stores}").font = summary_font
+
+    # Легенда
+    legend_row = summary_row + 3
+    title_font = Font(name="Arial", size=9, bold=True, color="888888")
+    row_font = Font(name="Arial", size=9, italic=True, color="999999")
+
+    ws.cell(row=legend_row, column=1, value="— Группы товаров —").font = title_font
+    ws.cell(row=legend_row + 1, column=1,
+            value=f"A: ходовые (≥{threshold_a} шт/день) → среднее по 7 дням").font = row_font
+    ws.cell(row=legend_row + 2, column=1,
+            value=f"B: средние (≥{threshold_b} шт/день) → среднее по 14 дням").font = row_font
+    ws.cell(row=legend_row + 3, column=1,
+            value=f"C: редкие (<{threshold_b} шт/день) → среднее по 30 дням").font = row_font
+
+    ws.cell(row=legend_row + 5, column=1, value="— Остатки по складам —").font = title_font
+    ws.cell(row=legend_row + 6, column=1,
+            value="Наведите мышь на ячейку для детализации по складам").font = row_font
+
+    # Сохранение
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
+    output_path = os.path.join(REPORTS_DIR, f'summary_{timestamp}.xlsx')
+
+    wb.save(output_path)
+    logger.info(f"✓ Сводный отчёт: {output_path}")
     return output_path

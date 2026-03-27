@@ -30,6 +30,10 @@ class CompareCB(CallbackData, prefix="cmp"):
     store_id: int = 0
 
 
+class CompareModeCB(CallbackData, prefix="cmpmode"):
+    action: str  # "pair" | "summary"
+
+
 class SubscribeCB(CallbackData, prefix="sub"):
     action: str  # "toggle"
 
@@ -196,6 +200,24 @@ def confirm_delete_kb(store_id: int) -> InlineKeyboardMarkup:
                 callback_data=NavCB(target="store_mgmt").pack()
             ),
         ]
+    ])
+
+
+def comparison_mode_kb() -> InlineKeyboardMarkup:
+    """Подменю режима сравнения: пара или сводный."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="🔀 Сравнение пары",
+            callback_data=CompareModeCB(action="pair").pack()
+        )],
+        [InlineKeyboardButton(
+            text="📋 Сводный отчёт",
+            callback_data=CompareModeCB(action="summary").pack()
+        )],
+        [InlineKeyboardButton(
+            text="← Назад",
+            callback_data=NavCB(target="main").pack()
+        )],
     ])
 
 
