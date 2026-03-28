@@ -65,12 +65,17 @@ async def _migrate_warehouse_in_way(db):
     await _migrate_add_column_safe(db, 'warehouse_stocks', 'in_way_from_client', 'INTEGER DEFAULT 0')
 
 
+async def _migrate_warehouse_supplier_article(db):
+    await _migrate_add_column_safe(db, 'warehouse_stocks', 'supplier_article', 'TEXT')
+
+
 MIGRATIONS = [
     (1, _migrate_marketplace_name),
     (2, _migrate_obfuscate_tokens),
     (3, _migrate_product_price),
     (4, _migrate_warehouse_stocks),
     (5, _migrate_warehouse_in_way),
+    (6, _migrate_warehouse_supplier_article),
 ]
 
 
@@ -570,10 +575,11 @@ async def save_warehouse_data(store_id: int, rows: list[dict]):
         for row in rows:
             await db.execute(
                 '''INSERT INTO warehouse_stocks
-                   (store_id, nm_id, warehouse_name, quantity, in_way_from_client)
-                   VALUES (?, ?, ?, ?, ?)''',
+                   (store_id, nm_id, warehouse_name, quantity, in_way_from_client, supplier_article)
+                   VALUES (?, ?, ?, ?, ?, ?)''',
                 (store_id, row['nm_id'], row.get('warehouse_name', ''),
-                 row.get('quantity', 0), row.get('in_way_from_client', 0))
+                 row.get('quantity', 0), row.get('in_way_from_client', 0),
+                 row.get('supplier_article'))
             )
         await db.commit()
 
@@ -593,7 +599,7 @@ async def get_latest_warehouse_data(store_id: int) -> list[dict]:
         fetched_at = ts_row[0]
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
-            'SELECT nm_id, warehouse_name, quantity, in_way_from_client FROM warehouse_stocks '
+            'SELECT nm_id, warehouse_name, quantity, in_way_from_client, supplier_article FROM warehouse_stocks '
             'WHERE store_id = ? AND fetched_at = ?',
             (store_id, fetched_at)
         )
