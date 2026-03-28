@@ -19,7 +19,7 @@ from bot.config import DATA_CACHE_TTL
 from bot.db import (
     get_stores, get_store, get_setting,
     save_product_data, get_latest_product_data, is_data_fresh,
-    save_warehouse_data, get_latest_warehouse_data,
+    save_warehouse_data, get_latest_warehouse_data, is_warehouse_data_fresh,
     save_report_history, log_action,
 )
 from bot.report import (
@@ -316,7 +316,7 @@ async def _fetch_or_cache(store_id, token, days_threshold, threshold_a, threshol
 
 async def _fetch_or_cache_warehouse(store_id, token):
     """Загружает данные по складам из кэша или API."""
-    if await is_data_fresh(store_id, DATA_CACHE_TTL):
+    if await is_warehouse_data_fresh(store_id, DATA_CACHE_TTL):
         wh_data = await get_latest_warehouse_data(store_id)
         if wh_data:
             return wh_data

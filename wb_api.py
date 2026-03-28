@@ -225,10 +225,10 @@ def get_stocks_detailed(nm_ids: list = None, token: str = None) -> pd.DataFrame:
         df['inWayFromClient'] = 0
 
     # Сохраняем только нужные колонки, не группируем
-    cols = ['nmId', 'warehouseName', 'quantity', 'inWayFromClient']
+    cols = ['nmId', 'warehouseName', 'quantity', 'inWayFromClient', 'supplierArticle']
     for c in cols:
         if c not in df.columns:
-            df[c] = '' if c == 'warehouseName' else 0
+            df[c] = '' if c in ('warehouseName', 'supplierArticle') else 0
 
     return df[cols].reset_index(drop=True)
 

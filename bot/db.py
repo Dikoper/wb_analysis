@@ -539,6 +539,18 @@ async def is_data_fresh(store_id: int, ttl_minutes: int) -> bool:
         return await cursor.fetchone() is not None
 
 
+async def is_warehouse_data_fresh(store_id: int, ttl_minutes: int) -> bool:
+    """Проверяет, есть ли данные по складам свежее ttl_minutes минут."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT 1 FROM warehouse_stocks WHERE store_id = ? "
+            "AND fetched_at > datetime('now', ?)"
+            " LIMIT 1",
+            (store_id, f'-{ttl_minutes} minutes')
+        )
+        return await cursor.fetchone() is not None
+
+
 async def cleanup_old_product_data(days: int) -> int:
     """Удаляет данные о товарах старше days дней. Возвращает кол-во удалённых."""
     async with aiosqlite.connect(DB_PATH) as db:

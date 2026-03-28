@@ -537,6 +537,7 @@ def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
             'warehouse_name': row['warehouseName'],
             'quantity': int(row['quantity']),
             'in_way_from_client': int(row.get('inWayFromClient', 0)),
+            'supplier_article': row.get('supplierArticle') or None,
         }
         for _, row in df.iterrows()
     ]
@@ -851,6 +852,15 @@ def generate_summary_report(
         for r in rows:
             nm_to_article.setdefault(store_name, {})[r['nm_id']] = r.get('supplier_article')
 
+    # Дополняем маппинг из warehouse data (для nm_id без заказов)
+    for store_name, wh_rows in all_warehouse_data.items():
+        store_nm_map = nm_to_article.setdefault(store_name, {})
+        for wr in wh_rows:
+            if wr['nm_id'] not in store_nm_map:
+                sa = wr.get('supplier_article')
+                if sa:
+                    store_nm_map[wr['nm_id']] = sa
+
     # Построение индекса складов по article (не nm_id)
     wh_index = {}  # {store_name: {article: [{warehouse_name, quantity, in_way_from_client}]}}
     for store_name, wh_rows in all_warehouse_data.items():
@@ -1037,7 +1047,15 @@ def generate_summary_report(
                     compact_parts.append(f"+{total_iwfc} возвр.")
                 compact = " | ".join(compact_parts)
             else:
-                compact = f"+{total_iwfc} возвр." if total_iwfc > 0 else "—"
+                # Fallback: нет детализации по складам, используем product data
+                stock_val = store_data.get('stock_qty', 0)
+                iwfc_total = store_data.get('in_way_from_client', 0)
+                parts = []
+                if stock_val > 0:
+                    parts.append(f"итого: {stock_val}")
+                if iwfc_total > 0:
+                    parts.append(f"+{iwfc_total} возвр.")
+                compact = " | ".join(parts) if parts else "—"
 
             c = ws.cell(row=row_num, column=9, value=compact)
             c.font = Font(name="Arial", size=9, color="555555")
