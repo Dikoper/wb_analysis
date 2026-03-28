@@ -506,6 +506,7 @@ def aggregate_by_article(rows: list[dict]) -> dict:
             existing = result[art]
             existing['stock_qty'] = existing.get('stock_qty', 0) + r.get('stock_qty', 0)
             existing['stock_qty_clean'] = existing.get('stock_qty_clean', 0) + r.get('stock_qty_clean', 0)
+            existing['in_way_from_client'] = existing.get('in_way_from_client', 0) + r.get('in_way_from_client', 0)
             existing['avg_per_day'] = (existing.get('avg_per_day') or 0) + (r.get('avg_per_day') or 0)
             if (r.get('avg_per_day') or 0) > (existing.get('_max_avg') or 0):
                 existing['_max_avg'] = r.get('avg_per_day') or 0
@@ -535,6 +536,7 @@ def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
             'nm_id': int(row['nmId']),
             'warehouse_name': row['warehouseName'],
             'quantity': int(row['quantity']),
+            'in_way_from_client': int(row.get('inWayFromClient', 0)),
         }
         for _, row in df.iterrows()
     ]
@@ -801,6 +803,18 @@ def generate_comparison_report(
 SUMMARY_PAIR_ALT_BG = "F5F5F5"
 
 
+def _merge_wh_by_name(wh_list):
+    """Объединяет записи складов с одинаковым warehouse_name."""
+    merged = {}
+    for w in wh_list:
+        name = w['warehouse_name']
+        if name not in merged:
+            merged[name] = {'warehouse_name': name, 'quantity': 0, 'in_way_from_client': 0}
+        merged[name]['quantity'] += w['quantity']
+        merged[name]['in_way_from_client'] += w['in_way_from_client']
+    return list(merged.values())
+
+
 def generate_summary_report(
     all_stores_data: dict,
     all_warehouse_data: dict,
@@ -831,17 +845,25 @@ def generate_summary_report(
     for store_name, rows in all_stores_data.items():
         aggregated[store_name] = aggregate_by_article(rows)
 
-    # Построение индекса складов: {store_name: {nm_id: [{warehouse_name, quantity}]}}
-    wh_index = {}
+    # Маппинг nm_id → supplier_article из product data
+    nm_to_article = {}
+    for store_name, rows in all_stores_data.items():
+        for r in rows:
+            nm_to_article.setdefault(store_name, {})[r['nm_id']] = r.get('supplier_article')
+
+    # Построение индекса складов по article (не nm_id)
+    wh_index = {}  # {store_name: {article: [{warehouse_name, quantity, in_way_from_client}]}}
     for store_name, wh_rows in all_warehouse_data.items():
         store_wh = {}
+        store_nm_map = nm_to_article.get(store_name, {})
         for wr in wh_rows:
-            nm_id = wr['nm_id']
-            if nm_id not in store_wh:
-                store_wh[nm_id] = []
-            store_wh[nm_id].append({
+            article = store_nm_map.get(wr['nm_id'])
+            if not article:
+                continue
+            store_wh.setdefault(article, []).append({
                 'warehouse_name': wr['warehouse_name'],
                 'quantity': wr['quantity'],
+                'in_way_from_client': wr.get('in_way_from_client', 0),
             })
         wh_index[store_name] = store_wh
 
@@ -920,8 +942,6 @@ def generate_summary_report(
             is_bottom = (store_idx == group_size - 1)
             store_data = aggregated[store_name][article]
 
-            ws.row_dimensions[row_num].height = 18
-
             # B: Магазин
             c = ws.cell(row=row_num, column=2, value=store_name)
             c.font = data_font
@@ -939,24 +959,41 @@ def generate_summary_report(
             c.alignment = center
             c.border = _group_border(is_top, is_bottom, 3)
 
-            # D: Остаток + комментарий с детализацией по складам
-            stock_val = store_data.get('stock_qty', 0)
-            c = ws.cell(row=row_num, column=4, value=stock_val)
+            # Warehouse data (один раз для D, комментария и I)
+            wh_list = wh_index.get(store_name, {}).get(article, [])
+            wh_list = _merge_wh_by_name(wh_list)
+            total_iwfc = sum(w.get('in_way_from_client', 0) for w in wh_list)
+            wh_list = [w for w in wh_list if w['quantity'] > 0]
+            wh_list.sort(key=lambda w: w['quantity'], reverse=True)
+
+            # D: Остаток (quantity — товар на складе, возвраты отдельно)
+            if wh_list:
+                wh_total_qty = sum(w['quantity'] for w in wh_list)
+                display_stock = f"{wh_total_qty} (+{total_iwfc} возвр.)" if total_iwfc > 0 else str(wh_total_qty)
+            else:
+                stock_val = store_data.get('stock_qty', 0)
+                iwfc_total = store_data.get('in_way_from_client', 0)
+                display_stock = f"{stock_val} (+{iwfc_total} возвр.)" if iwfc_total > 0 else str(stock_val)
+            c = ws.cell(row=row_num, column=4, value=display_stock)
             c.font = data_font
             c.alignment = center
             c.border = _group_border(is_top, is_bottom, 4)
-            c.number_format = "0"
 
             # Комментарий к остатку: детализация по складам
-            wh_list = wh_index.get(store_name, {}).get(nm_id, [])
-            wh_list = [w for w in wh_list if w['quantity'] > 0]
-            wh_list.sort(key=lambda w: w['quantity'], reverse=True)
-            if wh_list:
-                detailed = "\n".join(f"{w['warehouse_name']}: {w['quantity']} шт" for w in wh_list)
-                comment_text = f"Остатки по складам:\n{detailed}\n\nИтого: {sum(w['quantity'] for w in wh_list)} шт"
+            if wh_list or total_iwfc > 0:
+                detailed_lines = [f"{w['warehouse_name']}: {w['quantity']} шт" for w in wh_list]
+                detailed = "\n".join(detailed_lines) if detailed_lines else "нет"
+                wh_total_qty = sum(w['quantity'] for w in wh_list)
+                comment_text = (
+                    f"Остатки по складам:\n{detailed}\n\n"
+                    f"Итого на складах: {wh_total_qty} шт"
+                )
+                if total_iwfc > 0:
+                    comment_text += f"\nВ возврате: {total_iwfc} шт"
                 comment = Comment(comment_text, "WB Analiz")
                 comment.width = 300
-                comment.height = max(80, len(wh_list) * 20)
+-               total_lines = len(wh_list) + 8
+-               comment.height = total_lines * 14
                 c.comment = comment
 
             # E: Дней осталось
@@ -995,20 +1032,17 @@ def generate_summary_report(
 
             # I: Остатки по складам — компактная строка
             if wh_list:
-                compact = " | ".join(f"{w['warehouse_name']}: {w['quantity']}" for w in wh_list)
+                compact_parts = [f"{w['warehouse_name']}: {w['quantity']}" for w in wh_list]
+                if total_iwfc > 0:
+                    compact_parts.append(f"+{total_iwfc}")
+                compact = " | ".join(compact_parts)
             else:
-                compact = "—"
+                compact = f"+{total_iwfc}" if total_iwfc > 0 else "—"
 
             c = ws.cell(row=row_num, column=9, value=compact)
             c.font = Font(name="Arial", size=9, color="555555")
             c.alignment = wrap_left
             c.border = _group_border(is_top, is_bottom, 9)
-
-            # Автоматический подбор высоты ячейки для читаемости
-            # Подсчитываем количество строк в компактной строке (разделены |)
-            num_lines = compact.count('|') + 1 if compact != "—" else 1
-            row_height = max(18, 14 + num_lines * 10)
-            ws.row_dimensions[row_num].height = row_height
 
             # Фон чередования
             if group_bg:
