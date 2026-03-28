@@ -15,17 +15,13 @@ from bot.keyboards import (
     comparison_mode_kb, compare_stores_kb, store_display_name, back_to_menu_kb,
 )
 from bot.states import MenuStates
-from bot.config import DATA_CACHE_TTL
 from bot.db import (
     get_stores, get_store, get_setting,
-    save_product_data, get_latest_product_data, is_data_fresh,
-    save_warehouse_data, get_latest_warehouse_data, is_warehouse_data_fresh,
     save_report_history, log_action,
 )
-from bot.report import (
-    fetch_store_data, fetch_warehouse_data,
-    generate_comparison_report, generate_summary_report,
-)
+from bot.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
+from bot.report_comparison import generate_comparison_report
+from bot.report_summary import generate_summary_report
 from wb_api import WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -136,8 +132,8 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
 
         data1, data2 = await asyncio.gather(
-            _fetch_or_cache(store1_id, store1['token'], days_threshold, threshold_a, threshold_b),
-            _fetch_or_cache(store2_id, store2['token'], days_threshold, threshold_a, threshold_b),
+            fetch_or_cache_product(store1_id, store1['token'], days_threshold, threshold_a, threshold_b),
+            fetch_or_cache_product(store2_id, store2['token'], days_threshold, threshold_a, threshold_b),
         )
 
         await progress_msg.edit_text(
@@ -229,10 +225,10 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
         warehouse_tasks = []
         for s in stores:
             product_tasks.append(
-                _fetch_or_cache(s['id'], s['token'], days_threshold, threshold_a, threshold_b)
+                fetch_or_cache_product(s['id'], s['token'], days_threshold, threshold_a, threshold_b)
             )
             warehouse_tasks.append(
-                _fetch_or_cache_warehouse(s['id'], s['token'])
+                fetch_or_cache_warehouse(s['id'], s['token'])
             )
 
         all_product_results = await asyncio.gather(*product_tasks)
@@ -295,31 +291,3 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
             f"❌ Ошибка сводного отчёта:\n{e}",
             reply_markup=back_to_menu_kb(),
         )
-
-
-# ── Утилиты ──────────────────────────────────────────────────────────────────
-
-async def _fetch_or_cache(store_id, token, days_threshold, threshold_a, threshold_b):
-    """Загружает данные товаров из кэша или API."""
-    if await is_data_fresh(store_id, DATA_CACHE_TTL):
-        rows, _ = await get_latest_product_data(store_id)
-        return rows
-    rows = await asyncio.to_thread(
-        fetch_store_data, token=token,
-        days_threshold=days_threshold,
-        threshold_a=threshold_a,
-        threshold_b=threshold_b,
-    )
-    await save_product_data(store_id, rows)
-    return rows
-
-
-async def _fetch_or_cache_warehouse(store_id, token):
-    """Загружает данные по складам из кэша или API."""
-    if await is_warehouse_data_fresh(store_id, DATA_CACHE_TTL):
-        wh_data = await get_latest_warehouse_data(store_id)
-        if wh_data:
-            return wh_data
-    wh_data = await asyncio.to_thread(fetch_warehouse_data, token=token)
-    await save_warehouse_data(store_id, wh_data)
-    return wh_data

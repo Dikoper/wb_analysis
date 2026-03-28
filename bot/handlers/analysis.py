@@ -14,12 +14,13 @@ from bot.keyboards import (
     MenuCB, StoreCB, NavCB,
     stores_list_kb, store_actions_kb, store_display_name, back_to_menu_kb,
 )
-from bot.config import DATA_CACHE_TTL, MSK_TZ
+from bot.config import MSK_TZ
 from bot.db import (
     get_stores, get_store, get_last_report, save_report_history, get_setting,
-    save_product_data, get_latest_product_data, is_data_fresh, log_action,
+    log_action,
 )
-from bot.report import fetch_store_data, generate_report_from_data
+from bot.data_service import fetch_or_cache_product
+from bot.report_single import generate_report_from_data
 from wb_api import WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -123,15 +124,9 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
 
         # 1. Загрузка данных из API (или из кэша если свежие)
         store_id = callback_data.store_id
-        if await is_data_fresh(store_id, DATA_CACHE_TTL):
-            logger.info(f"Данные для {name} свежие (кэш), пропускаем API")
-            product_rows, _ = await get_latest_product_data(store_id)
-        else:
-            product_rows = await asyncio.to_thread(
-                fetch_store_data, token=store['token'],
-                days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
-            )
-            await save_product_data(store_id, product_rows)
+        product_rows = await fetch_or_cache_product(
+            store_id, store['token'], days_threshold, threshold_a, threshold_b,
+        )
 
         # 2. Генерация Excel из данных
         await progress_msg.edit_text(
