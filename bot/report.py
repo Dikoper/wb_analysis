@@ -969,11 +969,11 @@ def generate_summary_report(
             # D: Остаток (quantity — товар на складе, возвраты отдельно)
             if wh_list:
                 wh_total_qty = sum(w['quantity'] for w in wh_list)
-                display_stock = f"{wh_total_qty} (+{total_iwfc} возвр.)" if total_iwfc > 0 else str(wh_total_qty)
+                display_stock = f"{wh_total_qty} (+{total_iwfc})" if total_iwfc > 0 else str(wh_total_qty)
             else:
                 stock_val = store_data.get('stock_qty', 0)
                 iwfc_total = store_data.get('in_way_from_client', 0)
-                display_stock = f"{stock_val} (+{iwfc_total} возвр.)" if iwfc_total > 0 else str(stock_val)
+                display_stock = f"{stock_val} (+{iwfc_total})" if iwfc_total > 0 else str(stock_val)
             c = ws.cell(row=row_num, column=4, value=display_stock)
             c.font = data_font
             c.alignment = center
@@ -992,8 +992,8 @@ def generate_summary_report(
                     comment_text += f"\nВ возврате: {total_iwfc} шт"
                 comment = Comment(comment_text, "WB Analiz")
                 comment.width = 300
--               total_lines = len(wh_list) + 8
--               comment.height = total_lines * 14
+                total_lines = len(wh_list) + 8
+                comment.height = total_lines * 14
                 c.comment = comment
 
             # E: Дней осталось
@@ -1034,10 +1034,10 @@ def generate_summary_report(
             if wh_list:
                 compact_parts = [f"{w['warehouse_name']}: {w['quantity']}" for w in wh_list]
                 if total_iwfc > 0:
-                    compact_parts.append(f"+{total_iwfc}")
+                    compact_parts.append(f"+{total_iwfc} возвр.")
                 compact = " | ".join(compact_parts)
             else:
-                compact = f"+{total_iwfc}" if total_iwfc > 0 else "—"
+                compact = f"+{total_iwfc} возвр." if total_iwfc > 0 else "—"
 
             c = ws.cell(row=row_num, column=9, value=compact)
             c.font = Font(name="Arial", size=9, color="555555")
