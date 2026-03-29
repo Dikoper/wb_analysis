@@ -248,6 +248,7 @@ def make_report_path(prefix: str) -> str:
 def write_store_row(
     ws, row_num: int, store_data: dict, store_name: str,
     is_top: bool, is_bottom: bool, num_cols: int,
+    row_height: int | None = 18,
 ):
     """
     Записывает общие колонки строки данных магазина (B-H).
@@ -261,7 +262,8 @@ def write_store_row(
     def _border(col_idx):
         return group_border_fn(is_top, is_bottom, col_idx, num_cols)
 
-    ws.row_dimensions[row_num].height = 18
+    if row_height is not None:
+        ws.row_dimensions[row_num].height = row_height
 
     # B: Магазин
     c = ws.cell(row=row_num, column=2, value=store_name)

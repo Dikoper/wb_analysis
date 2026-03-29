@@ -124,10 +124,11 @@ def generate_summary_report(
             is_bottom = (store_idx == group_size - 1)
             store_data = aggregated[store_name][article]
 
-            # B-H: общие колонки
+            # B-H: общие колонки (без фиксации высоты — Excel подберёт под wrap_text)
             border_fn = write_store_row(
                 ws, row_num, store_data, store_name,
                 is_top, is_bottom, num_cols,
+                row_height=None,
             )
 
             # Warehouse data для колонок D (перезапись) и I
