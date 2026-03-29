@@ -15,8 +15,9 @@ from apscheduler.triggers.cron import CronTrigger
 from bot.config import TIMEZONE, MSK_TZ
 from bot.db import get_stores, get_setting, save_report_history, get_subscribers
 from bot.keyboards import store_display_name
-from bot.services.data_service import fetch_or_cache_product
+from bot.services.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
 from bot.reports.single import generate_report_from_data
+from bot.reports.summary import generate_summary_report
 from bot.services.wb_client import WBTokenError
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,10 @@ async def send_daily_reports(bot: Bot):
     threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
     threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
 
-    # Отчёт по каждому магазину
+    # Отчёт по каждому магазину + накопление данных для сводного
+    all_stores_data = {}   # {store_name: product_rows}
+    all_warehouse_data = {}  # {store_name: warehouse_rows}
+
     for store in stores:
         name = store_display_name(store)
         try:
@@ -88,10 +92,18 @@ async def send_daily_reports(bot: Bot):
                 store['id'], store['token'], days_threshold, threshold_a, threshold_b,
             )
 
-            # 2. Генерация Excel из данных
+            # 2. Загрузка данных по складам
+            warehouse_rows = await fetch_or_cache_warehouse(store['id'], store['token'])
+
+            # Накапливаем для сводного отчёта
+            all_stores_data[name] = product_rows
+            all_warehouse_data[name] = warehouse_rows
+
+            # 3. Генерация Excel из данных
             report_path = await asyncio.to_thread(
                 generate_report_from_data, product_rows=product_rows, store_name=name,
                 days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
+                warehouse_rows=warehouse_rows,
             )
             await save_report_history(store['id'], report_path)
 
@@ -124,6 +136,36 @@ async def send_daily_reports(bot: Bot):
                     text=f"❌ Ошибка отчёта для {name}: {e}"
                 )
             logger.error(f"Ошибка отчёта для {name}: {e}", exc_info=True)
+
+    # Сводный отчёт по всем магазинам (если данные есть хотя бы по 2 магазинам)
+    if len(all_stores_data) >= 2:
+        try:
+            summary_path = await asyncio.to_thread(
+                generate_summary_report,
+                all_stores_data=all_stores_data,
+                all_warehouse_data=all_warehouse_data,
+                days_threshold=days_threshold,
+                threshold_a=threshold_a,
+                threshold_b=threshold_b,
+            )
+            if summary_path:
+                document = FSInputFile(summary_path, filename=os.path.basename(summary_path))
+                for chat_id in subscribers:
+                    await bot.send_document(
+                        chat_id=chat_id,
+                        document=document,
+                        caption="📊 Сводный отчёт по всем магазинам"
+                    )
+                logger.info(f"Сводный отчёт отправлен {len(subscribers)} подписчикам")
+            else:
+                logger.info("Сводный отчёт не сгенерирован (нет общих позиций)")
+        except Exception as e:
+            for chat_id in subscribers:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"❌ Ошибка сводного отчёта: {e}"
+                )
+            logger.error(f"Ошибка сводного отчёта: {e}", exc_info=True)
 
 
 def reschedule_daily_reports(time_str: str):

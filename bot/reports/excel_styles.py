@@ -32,6 +32,9 @@ PRICE_INCREASE_COLORS = {
 # Ссылка на кабинет продавца WB
 WB_CABINET_URL = "https://seller.wildberries.ru/discount-and-prices?search={}"
 
+# Ссылка на карточку товара в магазине WB
+WB_PRODUCT_URL = "https://www.wildberries.ru/catalog/{}/detail.aspx"
+
 # Цвета рекомендаций сравнения
 CMP_RAISE_BG = "E8F5E9"   # светло-зелёный
 CMP_LOWER_BG = "FFEBEE"   # светло-красный

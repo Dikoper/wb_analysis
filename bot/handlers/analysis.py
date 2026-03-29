@@ -19,7 +19,7 @@ from bot.db import (
     get_stores, get_store, get_last_report, save_report_history, get_setting,
     log_action,
 )
-from bot.services.data_service import fetch_or_cache_product
+from bot.services.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
 from bot.reports.single import generate_report_from_data
 from bot.services.wb_client import WBTokenError
 
@@ -128,7 +128,10 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
             store_id, store['token'], days_threshold, threshold_a, threshold_b,
         )
 
-        # 2. Генерация Excel из данных
+        # 2. Загрузка данных по складам (для детализации остатков)
+        warehouse_rows = await fetch_or_cache_warehouse(store_id, store['token'])
+
+        # 3. Генерация Excel из данных
         await progress_msg.edit_text(
             f"⏳ Генерирую отчёт для <b>{name}</b>...\n"
             "Формирование Excel.",
@@ -137,6 +140,7 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         report_path = await asyncio.to_thread(
             generate_report_from_data, product_rows=product_rows, store_name=name,
             days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
+            warehouse_rows=warehouse_rows,
         )
         await save_report_history(store_id, report_path)
 
