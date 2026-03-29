@@ -14,6 +14,7 @@ from bot.core.states import MenuStates
 from bot.config import REPORT_TIME as DEFAULT_REPORT_TIME, DEFAULT_DAYS_N, THRESHOLD_A as DEFAULT_THRESHOLD_A, THRESHOLD_B as DEFAULT_THRESHOLD_B
 from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber
 from bot.services.scheduler import reschedule_daily_reports
+from bot.utils.messages import edit_or_send
 
 logger = logging.getLogger(__name__)
 
@@ -119,16 +120,7 @@ async def set_report_time(message: Message, state: FSMContext, bot: Bot):
     subscribed = await is_subscriber(chat_id)
 
     async def edit_bot_msg(msg_text: str, reply_markup=None):
-        if bot_msg_id:
-            try:
-                await bot.edit_message_text(
-                    msg_text, chat_id=chat_id, message_id=bot_msg_id,
-                    reply_markup=reply_markup, parse_mode="HTML"
-                )
-                return
-            except Exception:
-                pass
-        await bot.send_message(chat_id, msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
 
     if not re.match(r'^([01]\d|2[0-3]):([0-5]\d)$', text):
         await edit_bot_msg(
@@ -193,16 +185,7 @@ async def set_days_threshold(message: Message, state: FSMContext, bot: Bot):
     chat_id = message.chat.id
 
     async def edit_bot_msg(msg_text: str, reply_markup=None):
-        if bot_msg_id:
-            try:
-                await bot.edit_message_text(
-                    msg_text, chat_id=chat_id, message_id=bot_msg_id,
-                    reply_markup=reply_markup, parse_mode="HTML"
-                )
-                return
-            except Exception:
-                pass
-        await bot.send_message(chat_id, msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
 
     try:
         n = int(text)
@@ -272,16 +255,7 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
     chat_id = message.chat.id
 
     async def edit_bot_msg(msg_text: str, reply_markup=None):
-        if bot_msg_id:
-            try:
-                await bot.edit_message_text(
-                    msg_text, chat_id=chat_id, message_id=bot_msg_id,
-                    reply_markup=reply_markup, parse_mode="HTML"
-                )
-                return
-            except Exception:
-                pass
-        await bot.send_message(chat_id, msg_text, reply_markup=reply_markup, parse_mode="HTML")
+        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
 
     error_msg = (
         "❌ Неверный формат. Введите два числа через точку с запятой.\n"

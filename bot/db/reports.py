@@ -33,6 +33,27 @@ async def get_last_report(store_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+async def get_last_reports_batch(store_ids: list[int]) -> dict[int, dict]:
+    """Возвращает последний отчёт для каждого магазина одним запросом.
+
+    Returns:
+        {store_id: {'created_at': ..., 'file_path': ...}} для магазинов с отчётами
+    """
+    if not store_ids:
+        return {}
+    placeholders = ','.join('?' for _ in store_ids)
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            'SELECT store_id, file_path, MAX(created_at) as created_at '
+            f'FROM report_history WHERE store_id IN ({placeholders}) '
+            'GROUP BY store_id',
+            store_ids,
+        )
+        rows = await cursor.fetchall()
+        return {row['store_id']: dict(row) for row in rows}
+
+
 async def cleanup_old_reports(days: int) -> int:
     """Удаляет отчёты старше days дней из БД и с диска. Возвращает кол-во удалённых."""
     async with aiosqlite.connect(DB_PATH) as db:

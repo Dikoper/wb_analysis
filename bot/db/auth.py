@@ -19,11 +19,11 @@ async def _ensure_auth_cache():
     now = time.monotonic()
     if _auth_cache_loaded and (now - _auth_cache_ts < _AUTH_CACHE_TTL):
         return
+    global _authorized_cache
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute('SELECT chat_id FROM authorized_users')
         rows = await cursor.fetchall()
-        _authorized_cache.clear()
-        _authorized_cache.update(row[0] for row in rows)
+    _authorized_cache = {row[0] for row in rows}
     _auth_cache_loaded = True
     _auth_cache_ts = now
 
