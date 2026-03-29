@@ -39,24 +39,34 @@ def fetch_store_data(
     """
     logger.info("=== Загрузка данных из WB API ===")
 
-    # === 1. Один запрос за 14д — из него вычисляются 7д и 14д (оптимизация: было 3 запроса) ===
+    # === 1. Цены — полный каталог товаров кабинета (задаёт набор nm_id) ===
     try:
-        logger.info("Загрузка заказов за 14 дней (единый запрос)...")
-        orders = get_orders_multi(token=token)
-        logger.info(f"✓ Заказы: {len(orders)} товаров (7д + 14д из одного запроса)")
+        logger.info("Загрузка цен (полный каталог)...")
+        prices_map = get_prices(nm_ids=None, token=token)
+        logger.info(f"✓ Каталог: {len(prices_map)} товаров в кабинете")
     except Exception as e:
-        logger.error(f"✗ Ошибка загрузки заказов: {e}")
-        raise
+        logger.warning(f"Не удалось загрузить цены: {e}")
+        prices_map = {}
 
+    # === 2. Остатки — все товары, без фильтра по nm_id ===
     try:
         logger.info("Загрузка остатков...")
-        stocks = get_stocks(orders['nmId'].tolist(), token=token)
-        logger.info(f"✓ Остатки: {len(stocks)} записей")
+        stocks = get_stocks(nm_ids=None, token=token)
+        logger.info(f"✓ Остатки: {len(stocks)} товаров")
     except Exception as e:
         logger.error(f"✗ Ошибка загрузки остатков: {e}")
         raise
 
-    # Объединяем заказы и остатки
+    # === 3. Заказы за 14д ===
+    try:
+        logger.info("Загрузка заказов за 14 дней...")
+        orders = get_orders_multi(token=token)
+        logger.info(f"✓ Заказы: {len(orders)} товаров с заказами")
+    except Exception as e:
+        logger.error(f"✗ Ошибка загрузки заказов: {e}")
+        raise
+
+    # === 4. OUTER JOIN: stocks + orders (полный каталог) ===
     df = merge_orders_stocks(orders, stocks)
 
     # Заполняем поля возвратов если отсутствуют после merge
@@ -69,27 +79,33 @@ def fetch_store_data(
     df['stock_qty_original'] = df['stock_qty']
     df['stock_qty'] = df['stock_qty_clean']
 
-    logger.info(f"Объединено товаров: {len(df)}")
+    # Добавляем товары из каталога цен, которых нет ни в stocks, ни в orders
+    existing_nm_ids = set(df['nmId'].tolist())
+    missing_from_prices = [nm for nm in prices_map if nm not in existing_nm_ids]
+    if missing_from_prices:
+        logger.info(f"Добавлено из каталога цен (0 остаток, 0 заказов): {len(missing_from_prices)}")
+        missing_df = pd.DataFrame({'nmId': missing_from_prices})
+        for col in ['stock_qty', 'stock_qty_original', 'in_way_from_client', 'stock_qty_clean',
+                     'orders_count_7d', 'orders_count_14d']:
+            missing_df[col] = 0
+        for col in ['supplierArticle', 'subject', 'category']:
+            missing_df[col] = ''
+        df = pd.concat([df, missing_df], ignore_index=True)
 
-    # === 2. Группировка A/B/C по среднему за 14д (ранее использовались 30д) ===
+    logger.info(f"Всего товаров в каталоге: {len(df)}")
+
+    # === 5. Группировка A/B/C по среднему за 14д ===
     df['avg_per_day'] = df['orders_count_14d'] / 14
     df['group'] = df['avg_per_day'].apply(lambda x: assign_group(x, threshold_a, threshold_b))
 
-    # === 3. Расчёт days_remaining ===
+    # === 6. Расчёт days_remaining ===
     df['days_remaining'] = df.apply(calc_days_remaining, axis=1)
 
-    # === 4. Расчёт % повышения цены ===
+    # === 7. Расчёт % повышения цены ===
     df['price_increase_pct'] = df['days_remaining'].apply(lambda d: get_price_increase(d, days_threshold))
 
-    # === 5. Загрузка цен ===
-    try:
-        logger.info("Загрузка цен...")
-        prices_map = get_prices(df['nmId'].tolist(), token=token)
-        df['price'] = df['nmId'].map(prices_map)
-        logger.info(f"✓ Цены загружены: {len(prices_map)} из {len(df)} товаров")
-    except Exception as e:
-        logger.warning(f"Не удалось загрузить цены: {e}")
-        df['price'] = None
+    # === 8. Маппинг цен ===
+    df['price'] = df['nmId'].map(prices_map)
 
     logger.info("=== Данные загружены и рассчитаны ===")
 

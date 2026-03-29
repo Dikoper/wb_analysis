@@ -147,10 +147,18 @@ def get_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
     if 'inWayFromClient' not in df.columns:
         df['inWayFromClient'] = 0
 
+    # Метаданные товара (берём из первой записи склада)
+    for col in ['supplierArticle', 'subject', 'category']:
+        if col not in df.columns:
+            df[col] = ''
+
     # Группируем по nmId, суммируем остатки и возвраты в пути
     grouped = df.groupby('nmId').agg({
         'quantity': 'sum',
-        'inWayFromClient': 'sum'
+        'inWayFromClient': 'sum',
+        'supplierArticle': 'first',
+        'subject': 'first',
+        'category': 'first',
     }).rename(columns={
         'quantity': 'stock_qty',
         'inWayFromClient': 'in_way_from_client'

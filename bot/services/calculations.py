@@ -141,16 +141,33 @@ def calc_avg_per_day(df: pd.DataFrame, days: int = 7) -> pd.DataFrame:
 
 def merge_orders_stocks(orders: pd.DataFrame, stocks: pd.DataFrame) -> pd.DataFrame:
     """
-    Объединяет заказы и остатки, сортирует по убыванию остатка.
+    Объединяет остатки и заказы через OUTER JOIN.
+
+    Stocks — основа каталога (содержит метаданные товара).
+    Товары без заказов за 14д получают orders_count = 0.
+    Товары с заказами, но без остатков — stock_qty = 0.
 
     Args:
-        orders: DataFrame с заказами
-        stocks: DataFrame с остатками
+        orders: DataFrame с заказами (nmId, orders_count_7d, orders_count_14d, ...)
+        stocks: DataFrame с остатками (nmId, stock_qty, supplierArticle, subject, category, ...)
 
     Returns:
         DataFrame объединённый, отсортированный по stock_qty (убывание)
     """
-    df = orders.merge(stocks, on='nmId', how='left')
+    # OUTER JOIN: сохраняем ВСЕ товары из обоих источников
+    df = stocks.merge(orders, on='nmId', how='outer', suffixes=('', '_orders'))
+
+    # Заполняем метаданные: приоритет stocks, fallback на orders
+    for col in ['supplierArticle', 'subject', 'category']:
+        orders_col = f'{col}_orders'
+        if orders_col in df.columns:
+            df[col] = df[col].fillna(df[orders_col])
+            df.drop(columns=[orders_col], inplace=True)
+
+    # Заполняем пропуски числовых полей
     df['stock_qty'] = df['stock_qty'].fillna(0).astype(int)
+    df['orders_count_7d'] = df['orders_count_7d'].fillna(0).astype(int)
+    df['orders_count_14d'] = df['orders_count_14d'].fillna(0).astype(int)
+
     df = df.sort_values('stock_qty', ascending=False).reset_index(drop=True)
     return df
