@@ -2,23 +2,24 @@
 Генерация Excel-отчёта по одному магазину (3 листа: на исходе + нет на складе + все товары).
 """
 
-import os
 import re
 import logging
-from datetime import datetime
 
 import pandas as pd
 from openpyxl.comments import Comment
 
-from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR, MSK_TZ
+from bot.config import THRESHOLD_A, THRESHOLD_B
 from bot.services.calculations import merge_wh_by_name
 from bot.reports.excel_styles import (
+    HYPERLINK_FONT, LEFT,
     WB_PRODUCT_URL,
     apply_header_style,
     apply_data_style,
     apply_hyperlinks,
     apply_group_colors,
     apply_legend_style,
+    add_stock_comment,
+    make_report_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,8 +45,7 @@ def _build_wh_index(warehouse_rows: list[dict], product_rows: list[dict]) -> dic
 
 def _apply_stock_comments(ws, df: pd.DataFrame, stock_col: int, wh_index: dict):
     """
-    Добавляет комментарии с детализацией по складам к ячейкам остатка.
-    Форматирует значение ячейки как 'qty (+возвр)'.
+    Форматирует ячейки остатка как 'qty (+возвр)' и добавляет Comment с детализацией.
     """
     for i, (_, row) in enumerate(df.iterrows()):
         row_num = i + 2  # строка 1 — шапка
@@ -59,27 +59,9 @@ def _apply_stock_comments(ws, df: pd.DataFrame, stock_col: int, wh_index: dict):
 
         # Комментарий с детализацией по складам
         wh_list = wh_index.get(nm_id, [])
-        if not wh_list:
-            continue
-        wh_list = merge_wh_by_name(wh_list)
-        total_iwfc = sum(w.get('in_way_from_client', 0) for w in wh_list)
-        wh_list = [w for w in wh_list if w['quantity'] > 0]
-        wh_list.sort(key=lambda w: w['quantity'], reverse=True)
-
-        if wh_list or total_iwfc > 0:
-            detailed_lines = [f"{w['warehouse_name']}: {w['quantity']} шт" for w in wh_list]
-            detailed = "\n".join(detailed_lines) if detailed_lines else "нет"
-            wh_total_qty = sum(w['quantity'] for w in wh_list)
-            comment_text = (
-                f"Остатки по складам:\n{detailed}\n\n"
-                f"Итого на складах: {wh_total_qty} шт"
-            )
-            if total_iwfc > 0:
-                comment_text += f"\nВ возврате: {total_iwfc} шт"
-            comment = Comment(comment_text, "WB Analiz")
-            comment.width = 300
-            comment.height = (len(wh_list) + 8) * 14
-            cell.comment = comment
+        if wh_list:
+            wh_list = merge_wh_by_name(wh_list)
+            add_stock_comment(cell, wh_list)
 
 
 def _apply_price_comments(ws, df: pd.DataFrame, price_col: int):
@@ -93,7 +75,7 @@ def _apply_price_comments(ws, df: pd.DataFrame, price_col: int):
             cell = ws.cell(row=row_num, column=price_col)
             comment = Comment(f"Рекомендация: повысить на {pct}%", "WB Analiz")
             comment.width = 200
-            comment.height = 30
+            comment.height = 50
             cell.comment = comment
 
 
@@ -101,18 +83,14 @@ def _apply_product_links(ws, article_col: int, nm_id_col: int):
     """
     Добавляет кликабельные ссылки на карточку товара в ячейки артикула.
     """
-    from openpyxl.styles import Font, Alignment
-    hyperlink_font = Font(name="Arial", size=10, color="1155CC", underline="single")
-    left = Alignment(horizontal="left", vertical="center")
-
     for row in ws.iter_rows(min_row=2):
         article_cell = row[article_col - 1]
         nm_id_cell = row[nm_id_col - 1]
         nm_id = nm_id_cell.value
         if nm_id is not None and article_cell.value is not None:
             article_cell.hyperlink = WB_PRODUCT_URL.format(nm_id)
-            article_cell.font = hyperlink_font
-            article_cell.alignment = left
+            article_cell.font = HYPERLINK_FONT
+            article_cell.alignment = LEFT
 
 
 def generate_report_from_data(
@@ -168,13 +146,10 @@ def generate_report_from_data(
     all_products = all_products.sort_values('avg_per_day', ascending=False)
     logger.info(f"Всего товаров: {len(all_products)}")
 
-    # Сохранение Excel
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-
-    timestamp = datetime.now(MSK_TZ).strftime('%Y%m%d_%H%M')
+    # Путь к файлу
     safe_name = re.sub(r'[^\w\s-]', '', store_name).strip()[:50] if store_name else ""
     name_part = f"_{safe_name}" if safe_name else ""
-    output_path = os.path.join(REPORTS_DIR, f'price_report{name_part}_{timestamp}.xlsx')
+    output_path = make_report_path(f'price_report{name_part}')
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         # ── Лист 1: На исходе ────────────────────────────────────────────

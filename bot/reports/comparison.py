@@ -2,21 +2,21 @@
 Генерация сравнительного Excel-отчёта по двум магазинам.
 """
 
-import os
 import re
 import logging
-from datetime import datetime
 
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, PatternFill, Side
+from openpyxl.styles import Font
 
-from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR, MSK_TZ
+from bot.config import THRESHOLD_A, THRESHOLD_B
 from bot.services.calculations import aggregate_by_article
 from bot.reports.excel_styles import (
-    HEADER_BG, HEADER_FG, GROUP_COLORS, WB_CABINET_URL,
+    DATA_FONT_BOLD, CENTER,
     CMP_RAISE_BG, CMP_LOWER_BG, CMP_PAIR_ALT_BG,
-    thin_border, fill,
-    apply_header_style, write_legend_block, make_group_border,
+    fill,
+    apply_header_style, write_legend_block,
+    write_merged_article, apply_row_background, write_store_row,
+    make_report_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,14 +67,6 @@ def generate_comparison_report(
 
     apply_header_style(ws, col_widths, headers=headers, auto_filter=False)
 
-    # Стили данных
-    data_font = Font(name="Arial", size=10, color="1A1A2E")
-    center = Alignment(horizontal="center", vertical="center")
-    left = Alignment(horizontal="left", vertical="center")
-    hyperlink_font = Font(name="Arial", size=10, color="1155CC", underline="single")
-    inner_thin = Side(style="thin", color="CCCCCC")
-    pair_thick = Side(style="medium", color="888888")
-
     num_cols = len(headers)
     current_row = 2
 
@@ -107,74 +99,18 @@ def generate_comparison_report(
             (row2, s2, store2_name, rec2, False),
         ]:
             is_bottom = not is_top
-            ws.row_dimensions[row_num].height = 18
 
-            def _border(col_idx):
-                return make_group_border(inner_thin, pair_thick, is_top, is_bottom, col_idx, num_cols)
-
-            # B: Магазин
-            c = ws.cell(row=row_num, column=2, value=store_name_val)
-            c.font = data_font
-            c.alignment = left
-            c.border = _border(2)
-
-            # C: ID (WB) — гиперссылка
-            nm_id = store_data.get('nm_id')
-            c = ws.cell(row=row_num, column=3, value=nm_id)
-            if nm_id:
-                c.hyperlink = WB_CABINET_URL.format(nm_id)
-                c.font = hyperlink_font
-            else:
-                c.font = data_font
-            c.alignment = center
-            c.border = _border(3)
-
-            # D: Остаток
-            c = ws.cell(row=row_num, column=4, value=store_data.get('stock_qty', 0))
-            c.font = data_font
-            c.alignment = center
-            c.border = _border(4)
-            c.number_format = "0"
-
-            # E: Дней осталось
-            dr = store_data.get('days_remaining')
-            c = ws.cell(row=row_num, column=5, value=dr)
-            c.font = data_font
-            c.alignment = center
-            c.border = _border(5)
-            if dr is not None:
-                c.number_format = "0.0"
-
-            # F: Продаж/день
-            c = ws.cell(row=row_num, column=6, value=store_data.get('avg_per_day', 0))
-            c.font = data_font
-            c.alignment = center
-            c.border = _border(6)
-            c.number_format = "0.00"
-
-            # G: Группа
-            group = store_data.get('product_group', '')
-            c = ws.cell(row=row_num, column=7, value=group)
-            c.font = Font(name="Arial", size=10, bold=True, color="1A1A2E")
-            c.alignment = center
-            c.border = _border(7)
-            if group in GROUP_COLORS:
-                c.fill = fill(GROUP_COLORS[group])
-
-            # H: Цена
-            price = store_data.get('price')
-            c = ws.cell(row=row_num, column=8, value=price)
-            c.font = data_font
-            c.alignment = center
-            c.border = _border(8)
-            if price is not None:
-                c.number_format = "0.00"
+            # B-H: общие колонки
+            border_fn = write_store_row(
+                ws, row_num, store_data, store_name_val,
+                is_top, is_bottom, num_cols,
+            )
 
             # I: Рекомендация
             c = ws.cell(row=row_num, column=9, value=rec)
-            c.font = Font(name="Arial", size=10, bold=True, color="1A1A2E")
-            c.alignment = center
-            c.border = _border(9)
+            c.font = DATA_FONT_BOLD
+            c.alignment = CENTER
+            c.border = border_fn(9)
             if "Повысить" in rec:
                 c.fill = fill(CMP_RAISE_BG)
             elif "Понизить" in rec:
@@ -182,20 +118,10 @@ def generate_comparison_report(
 
             # Фон чередования
             if pair_bg:
-                for col in range(2, num_cols + 1):
-                    existing = ws.cell(row=row_num, column=col)
-                    if existing.fill == PatternFill():
-                        existing.fill = fill(pair_bg)
+                apply_row_background(ws, row_num, pair_bg, num_cols)
 
-        # A: Артикул (merged) с толстой рамкой
-        ws.merge_cells(start_row=row1, start_column=1, end_row=row2, end_column=1)
-        c = ws.cell(row=row1, column=1, value=article)
-        c.font = Font(name="Arial", size=10, bold=True, color="1A1A2E")
-        c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
-        c.border = make_group_border(inner_thin, pair_thick, True, True, 1, num_cols)
-        ws.cell(row=row2, column=1).border = make_group_border(
-            inner_thin, pair_thick, False, True, 1, num_cols,
-        )
+        # A: Артикул (merged)
+        write_merged_article(ws, article, row1, row2, num_cols)
 
         current_row += 2
 
@@ -230,11 +156,8 @@ def generate_comparison_report(
             short = full_name.split()[0] if full_name.split() else "store"
         return re.sub(r'[^\w-]', '', short).strip()[:20]
 
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    timestamp = datetime.now(MSK_TZ).strftime('%Y%m%d_%H%M')
-    output_path = os.path.join(
-        REPORTS_DIR,
-        f'comparison_{_short_name(store1_name)}_{_short_name(store2_name)}_{timestamp}.xlsx',
+    output_path = make_report_path(
+        f'comparison_{_short_name(store1_name)}_{_short_name(store2_name)}'
     )
 
     wb.save(output_path)

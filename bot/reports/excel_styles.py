@@ -4,6 +4,7 @@
 
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.comments import Comment
 
 # ── Цветовые константы ────────────────────────────────────────────────────────
 
@@ -40,6 +41,17 @@ CMP_RAISE_BG = "E8F5E9"   # светло-зелёный
 CMP_LOWER_BG = "FFEBEE"   # светло-красный
 CMP_PAIR_ALT_BG = "F5F5F5"  # чередование пар
 SUMMARY_PAIR_ALT_BG = "F5F5F5"
+
+# ── Общие стили данных ────────────────────────────────────────────────────────
+
+DATA_FONT = Font(name="Arial", size=10, color="1A1A2E")
+DATA_FONT_BOLD = Font(name="Arial", size=10, bold=True, color="1A1A2E")
+CENTER = Alignment(horizontal="center", vertical="center")
+LEFT = Alignment(horizontal="left", vertical="center")
+WRAP_LEFT = Alignment(horizontal="left", vertical="center", wrap_text=True)
+HYPERLINK_FONT = Font(name="Arial", size=10, color="1155CC", underline="single")
+INNER_THIN = Side(style="thin", color="CCCCCC")
+GROUP_THICK = Side(style="medium", color="888888")
 
 # ── Вспомогательные стили ─────────────────────────────────────────────────────
 
@@ -196,3 +208,147 @@ def make_group_border(inner_thin_side, thick_side, is_top, is_bottom, col_idx, n
     left = thick_side if col_idx == 1 else inner_thin_side
     right = thick_side if col_idx == num_cols else inner_thin_side
     return Border(left=left, right=right, top=top, bottom=bottom)
+
+
+def group_border_fn(is_top: bool, is_bottom: bool, col_idx: int, num_cols: int) -> Border:
+    """Shortcut для make_group_border с дефолтными INNER_THIN/GROUP_THICK."""
+    return make_group_border(INNER_THIN, GROUP_THICK, is_top, is_bottom, col_idx, num_cols)
+
+
+def write_merged_article(ws, article: str, start_row: int, end_row: int, num_cols: int):
+    """Записывает merged-ячейку артикула (колонка A) с рамкой группы."""
+    if end_row > start_row:
+        ws.merge_cells(start_row=start_row, start_column=1, end_row=end_row, end_column=1)
+    c = ws.cell(row=start_row, column=1, value=article)
+    c.font = DATA_FONT_BOLD
+    c.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    c.border = group_border_fn(True, True, 1, num_cols)
+    if end_row > start_row:
+        ws.cell(row=end_row, column=1).border = group_border_fn(False, True, 1, num_cols)
+
+
+def apply_row_background(ws, row_num: int, bg_color: str, num_cols: int, start_col: int = 2):
+    """Применяет фон чередования к строке, не перезаписывая уже окрашенные ячейки."""
+    for col in range(start_col, num_cols + 1):
+        cell = ws.cell(row=row_num, column=col)
+        if cell.fill == PatternFill():
+            cell.fill = fill(bg_color)
+
+
+def make_report_path(prefix: str) -> str:
+    """Создаёт путь для отчёта с таймстампом. Гарантирует существование директории."""
+    import os
+    from datetime import datetime
+    from bot.config import REPORTS_DIR, MSK_TZ
+    os.makedirs(REPORTS_DIR, exist_ok=True)
+    timestamp = datetime.now(MSK_TZ).strftime('%Y%m%d_%H%M')
+    return os.path.join(REPORTS_DIR, f'{prefix}_{timestamp}.xlsx')
+
+
+def write_store_row(
+    ws, row_num: int, store_data: dict, store_name: str,
+    is_top: bool, is_bottom: bool, num_cols: int,
+):
+    """
+    Записывает общие колонки строки данных магазина (B-H).
+
+    Колонки: B=Магазин, C=ID(WB) с гиперссылкой, D=Остаток (int),
+    E=Дней осталось, F=Продаж/день, G=Группа, H=Цена.
+
+    Returns:
+        Callable border_fn(col_idx) для использования в специфичных колонках.
+    """
+    def _border(col_idx):
+        return group_border_fn(is_top, is_bottom, col_idx, num_cols)
+
+    ws.row_dimensions[row_num].height = 18
+
+    # B: Магазин
+    c = ws.cell(row=row_num, column=2, value=store_name)
+    c.font = DATA_FONT
+    c.alignment = LEFT
+    c.border = _border(2)
+
+    # C: ID (WB) — гиперссылка
+    nm_id = store_data.get('nm_id')
+    c = ws.cell(row=row_num, column=3, value=nm_id)
+    if nm_id:
+        c.hyperlink = WB_CABINET_URL.format(nm_id)
+        c.font = HYPERLINK_FONT
+    else:
+        c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = _border(3)
+
+    # D: Остаток
+    c = ws.cell(row=row_num, column=4, value=store_data.get('stock_qty', 0))
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = _border(4)
+    c.number_format = "0"
+
+    # E: Дней осталось
+    dr = store_data.get('days_remaining')
+    c = ws.cell(row=row_num, column=5, value=dr)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = _border(5)
+    if dr is not None:
+        c.number_format = "0.0"
+
+    # F: Продаж/день
+    c = ws.cell(row=row_num, column=6, value=store_data.get('avg_per_day', 0))
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = _border(6)
+    c.number_format = "0.00"
+
+    # G: Группа
+    group = store_data.get('product_group', '')
+    c = ws.cell(row=row_num, column=7, value=group)
+    c.font = DATA_FONT_BOLD
+    c.alignment = CENTER
+    c.border = _border(7)
+    if group in GROUP_COLORS:
+        c.fill = fill(GROUP_COLORS[group])
+
+    # H: Цена
+    price = store_data.get('price')
+    c = ws.cell(row=row_num, column=8, value=price)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = _border(8)
+    if price is not None:
+        c.number_format = "0.00"
+
+    return _border
+
+
+def add_stock_comment(cell, wh_list: list[dict]):
+    """
+    Добавляет Comment с детализацией по складам к ячейке остатка.
+
+    Args:
+        cell: openpyxl cell (уже содержит значение остатка)
+        wh_list: [{warehouse_name, quantity, in_way_from_client}] — уже merged и отфильтрован
+    """
+    total_iwfc = sum(w.get('in_way_from_client', 0) for w in wh_list)
+    active = [w for w in wh_list if w['quantity'] > 0]
+    active.sort(key=lambda w: w['quantity'], reverse=True)
+
+    if not active and total_iwfc <= 0:
+        return
+
+    detailed_lines = [f"{w['warehouse_name']}: {w['quantity']} шт" for w in active]
+    detailed = "\n".join(detailed_lines) if detailed_lines else "нет"
+    wh_total_qty = sum(w['quantity'] for w in active)
+    comment_text = (
+        f"Остатки по складам:\n{detailed}\n\n"
+        f"Итого на складах: {wh_total_qty} шт"
+    )
+    if total_iwfc > 0:
+        comment_text += f"\nВ возврате: {total_iwfc} шт"
+    comment = Comment(comment_text, "WB Analiz")
+    comment.width = 300
+    comment.height = (len(active) + 8) * 14
+    cell.comment = comment
