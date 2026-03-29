@@ -125,7 +125,7 @@ def generate_report_from_data(
             'nm_id', 'supplier_article', 'subject', 'category',
             'product_group', 'stock_qty', 'in_way_from_client', 'stock_qty_clean',
             'orders_7d', 'orders_14d', 'orders_30d',
-            'avg_per_day', 'days_remaining', 'price_increase_pct',
+            'avg_per_day', 'days_remaining', 'price_increase_pct', 'price',
         ])
 
     # Индекс складов для комментариев

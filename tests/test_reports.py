@@ -40,7 +40,6 @@ class TestSingleReport:
         data_rows = [r for r in ws.iter_rows(min_row=2) if r[0].value is not None]
         assert len(data_rows) == len(product_rows)
 
-    @pytest.mark.xfail(reason="known bug: empty DataFrame lacks 'price' column")
     def test_empty_data(self, tmp_path, monkeypatch):
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data([], store_name='Empty')
