@@ -65,6 +65,38 @@ async def _migrate_warehouse_supplier_article(db):
     await _migrate_add_column_safe(db, 'warehouse_stocks', 'supplier_article', 'TEXT')
 
 
+async def _migrate_cache_meta(db):
+    """Таблица метаданных кеша: один timestamp на снимок вместо fetched_at в каждой строке."""
+    await db.execute('''
+        CREATE TABLE IF NOT EXISTS cache_meta (
+            store_id INTEGER NOT NULL,
+            data_type TEXT NOT NULL,
+            fetched_at TEXT NOT NULL,
+            PRIMARY KEY (store_id, data_type)
+        )
+    ''')
+    # Очищаем старые накопленные снимки — оставляем только последний для каждого store_id
+    for table in ('product_data', 'warehouse_stocks'):
+        await db.execute(f'''
+            DELETE FROM {table} WHERE rowid NOT IN (
+                SELECT rowid FROM {table} AS t
+                WHERE t.fetched_at = (
+                    SELECT MAX(t2.fetched_at) FROM {table} AS t2
+                    WHERE t2.store_id = t.store_id
+                )
+            )
+        ''')
+    # Заполняем cache_meta из существующих данных
+    await db.execute('''
+        INSERT OR IGNORE INTO cache_meta (store_id, data_type, fetched_at)
+        SELECT store_id, 'product', MAX(fetched_at) FROM product_data GROUP BY store_id
+    ''')
+    await db.execute('''
+        INSERT OR IGNORE INTO cache_meta (store_id, data_type, fetched_at)
+        SELECT store_id, 'warehouse', MAX(fetched_at) FROM warehouse_stocks GROUP BY store_id
+    ''')
+
+
 MIGRATIONS = [
     (1, _migrate_marketplace_name),
     (2, _migrate_obfuscate_tokens),
@@ -72,6 +104,7 @@ MIGRATIONS = [
     (4, _migrate_warehouse_stocks),
     (5, _migrate_warehouse_in_way),
     (6, _migrate_warehouse_supplier_article),
+    (7, _migrate_cache_meta),
 ]
 
 
