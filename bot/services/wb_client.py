@@ -20,6 +20,7 @@ API_ORDERS = 'https://statistics-api.wildberries.ru/api/v1/supplier/orders'
 API_STOCKS = 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks'
 API_SELLER_INFO = 'https://common-api.wildberries.ru/api/v1/seller-info'
 API_PRICES = 'https://discounts-prices-api.wildberries.ru/api/v2/list/goods/filter'
+API_CONTENT_CARDS = 'https://content-api.wildberries.ru/content/v2/get/cards/list'
 
 
 class WBTokenError(Exception):
@@ -93,6 +94,122 @@ def fetch_with_retry(url: str, token: str, retries: int = 3, delay: int = 5) -> 
             else:
                 logger.error(f"Все {retries} попытки исчерпаны")
                 raise
+
+
+def post_with_retry(url: str, token: str, body: dict, retries: int = 3, delay: int = 5):
+    """
+    Выполняет POST запрос с JSON body и повторными попытками.
+
+    Args:
+        url: URL для запроса
+        token: токен авторизации
+        body: тело запроса (будет сериализовано в JSON)
+        retries: количество попыток
+        delay: пауза между попытками в секундах
+
+    Returns:
+        Данные из JSON ответа
+
+    Raises:
+        WBTokenError: при ошибке авторизации (401/403)
+        WBApiError: при других HTTP ошибках
+    """
+    payload = json.dumps(body).encode('utf-8')
+    req = urllib.request.Request(url, data=payload, method='POST')
+    req.add_header('Authorization', token)
+    req.add_header('Content-Type', 'application/json')
+
+    for attempt in range(1, retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                chunks = []
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                data = json.loads(b''.join(chunks).decode('utf-8'))
+            return data if data else {}
+
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise WBTokenError(
+                    f"Токен невалиден или истёк (HTTP {e.code}). "
+                    "Обновите токен в настройках бота."
+                )
+            if e.code == 429:
+                logger.warning(f"Rate limit (429), ожидание {delay * 2} сек...")
+                time.sleep(delay * 2)
+                continue
+            raise WBApiError(f"Ошибка WB API: HTTP {e.code}") from e
+
+        except (IncompleteRead, URLError, TimeoutError) as e:
+            logger.warning(f"POST попытка {attempt}/{retries} не удалась: {e}")
+            if attempt < retries:
+                time.sleep(delay)
+            else:
+                logger.error(f"Все {retries} попытки исчерпаны")
+                raise
+
+
+def get_catalog(token: str = None) -> dict:
+    """
+    Получает полный каталог товаров через Content API (курсорная пагинация).
+
+    Возвращает ВСЕ карточки товаров продавца, включая товары без остатков и продаж.
+
+    Args:
+        token: токен WB API
+
+    Returns:
+        dict {nmId: {'supplierArticle': str, 'subject': str, 'category': str}}
+    """
+    if token is None:
+        token = get_token()
+
+    catalog = {}
+    limit = 100
+    cursor = {"limit": limit}
+
+    while True:
+        body = {
+            "sort": {"cursor": cursor, "filter": {"withPhoto": -1}},
+        }
+        data = post_with_retry(API_CONTENT_CARDS, token, body, retries=2)
+
+        cards = data.get('cards', [])
+        if not cards:
+            break
+
+        for card in cards:
+            nm_id = card.get('nmID')
+            if nm_id is None:
+                continue
+            catalog[nm_id] = {
+                'supplierArticle': card.get('vendorCode', ''),
+                'subject': card.get('subjectName', ''),
+                'category': card.get('subjectName', ''),
+            }
+
+        # Курсорная пагинация: берём cursor из ответа
+        resp_cursor = data.get('cursor', {})
+        total = resp_cursor.get('total', 0)
+
+        if total < limit:
+            break
+
+        # Следующая страница
+        cursor = {
+            "limit": limit,
+            "updatedAt": resp_cursor.get('updatedAt', ''),
+            "nmID": resp_cursor.get('nmID', 0),
+        }
+
+        # Пауза между страницами (лимит 100 req/min)
+        time.sleep(0.7)
+
+    logger.info(f"Каталог Content API: {len(catalog)} карточек")
+    return catalog
 
 
 def get_seller_info(token: str) -> dict:
@@ -248,9 +365,11 @@ def get_prices(nm_ids: list = None, token: str = None) -> dict:
                 continue
             sizes = item.get('sizes', [])
             if sizes:
-                discounted = [s.get('discountedPrice', 0) for s in sizes if s.get('discountedPrice')]
-                if discounted:
-                    prices[nm_id] = min(discounted)
+                discounted = [s.get('discountedPrice') for s in sizes
+                              if s.get('discountedPrice') is not None]
+                prices[nm_id] = min(discounted) if discounted else 0
+            else:
+                prices[nm_id] = 0
 
         if len(goods) < limit:
             break

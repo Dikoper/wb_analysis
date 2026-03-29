@@ -9,7 +9,7 @@ import logging
 
 import pandas as pd
 
-from bot.services.wb_client import get_orders_multi, get_stocks, get_stocks_detailed, get_prices
+from bot.services.wb_client import get_orders_multi, get_stocks, get_stocks_detailed, get_prices, get_catalog
 from bot.services.calculations import (
     assign_group, calc_days_remaining, get_price_increase,
     merge_orders_stocks,
@@ -39,16 +39,29 @@ def fetch_store_data(
     """
     logger.info("=== Загрузка данных из WB API ===")
 
-    # === 1. Цены — полный каталог товаров кабинета (задаёт набор nm_id) ===
+    # === 1. Каталог — полный список товаров через Content API ===
     try:
-        logger.info("Загрузка цен (полный каталог)...")
+        logger.info("Загрузка каталога (Content API)...")
+        catalog = get_catalog(token=token)
+        logger.info(f"✓ Каталог: {len(catalog)} карточек")
+    except Exception as e:
+        logger.warning(f"Content API недоступен: {e}. Fallback на prices_map.")
+        catalog = None  # заполним после загрузки цен
+
+    # === 2. Цены ===
+    try:
+        logger.info("Загрузка цен...")
         prices_map = get_prices(nm_ids=None, token=token)
-        logger.info(f"✓ Каталог: {len(prices_map)} товаров в кабинете")
+        logger.info(f"✓ Цены: {len(prices_map)} товаров")
     except Exception as e:
         logger.warning(f"Не удалось загрузить цены: {e}")
         prices_map = {}
 
-    # === 2. Остатки — все товары, без фильтра по nm_id ===
+    # Fallback: если каталог не загрузился, используем prices_map как источник ID
+    if catalog is None:
+        catalog = {nm: {} for nm in prices_map}
+
+    # === 3. Остатки — все товары, без фильтра по nm_id ===
     try:
         logger.info("Загрузка остатков...")
         stocks = get_stocks(nm_ids=None, token=token)
@@ -57,7 +70,7 @@ def fetch_store_data(
         logger.error(f"✗ Ошибка загрузки остатков: {e}")
         raise
 
-    # === 3. Заказы за 14д ===
+    # === 4. Заказы за 14д ===
     try:
         logger.info("Загрузка заказов за 14 дней...")
         orders = get_orders_multi(token=token)
@@ -66,7 +79,7 @@ def fetch_store_data(
         logger.error(f"✗ Ошибка загрузки заказов: {e}")
         raise
 
-    # === 4. OUTER JOIN: stocks + orders (полный каталог) ===
+    # === 5. OUTER JOIN: stocks + orders ===
     df = merge_orders_stocks(orders, stocks)
 
     # Заполняем поля возвратов если отсутствуют после merge
@@ -79,18 +92,29 @@ def fetch_store_data(
     df['stock_qty_original'] = df['stock_qty']
     df['stock_qty'] = df['stock_qty_clean']
 
-    # Добавляем товары из каталога цен, которых нет ни в stocks, ни в orders
+    # === 6. Восстановление товаров из каталога ===
     existing_nm_ids = set(df['nmId'].tolist())
-    missing_from_prices = [nm for nm in prices_map if nm not in existing_nm_ids]
-    if missing_from_prices:
-        logger.info(f"Добавлено из каталога цен (0 остаток, 0 заказов): {len(missing_from_prices)}")
-        missing_df = pd.DataFrame({'nmId': missing_from_prices})
+    missing_nm_ids = [nm for nm in catalog if nm not in existing_nm_ids]
+    if missing_nm_ids:
+        logger.info(f"Добавлено из каталога (0 остаток, 0 заказов): {len(missing_nm_ids)}")
+        missing_df = pd.DataFrame({'nmId': missing_nm_ids})
         for col in ['stock_qty', 'stock_qty_original', 'in_way_from_client', 'stock_qty_clean',
                      'orders_count_7d', 'orders_count_14d']:
             missing_df[col] = 0
-        for col in ['supplierArticle', 'subject', 'category']:
-            missing_df[col] = ''
+        missing_df['supplierArticle'] = missing_df['nmId'].map(
+            lambda nm: catalog[nm].get('supplierArticle', ''))
+        missing_df['subject'] = missing_df['nmId'].map(
+            lambda nm: catalog[nm].get('subject', ''))
+        missing_df['category'] = missing_df['nmId'].map(
+            lambda nm: catalog[nm].get('category', ''))
         df = pd.concat([df, missing_df], ignore_index=True)
+
+    # === 7. Обогащение метаданных из каталога для всех товаров ===
+    for col in ['supplierArticle', 'subject', 'category']:
+        mask = df[col].isna() | (df[col] == '')
+        if mask.any():
+            df.loc[mask, col] = df.loc[mask, 'nmId'].map(
+                lambda nm: catalog.get(nm, {}).get(col, ''))
 
     logger.info(f"Всего товаров в каталоге: {len(df)}")
 
