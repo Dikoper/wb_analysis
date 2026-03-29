@@ -30,7 +30,7 @@ PRICE_INCREASE_COLORS = {
 }
 
 # Ссылка на кабинет продавца WB
-WB_CABINET_URL = "https://www.wildberries.ru/catalog/{}/detail.aspx"
+WB_CABINET_URL = "https://seller.wildberries.ru/discount-and-prices?search={}"
 
 # Цвета рекомендаций сравнения
 CMP_RAISE_BG = "E8F5E9"   # светло-зелёный
@@ -51,7 +51,7 @@ def fill(hex_color):
 
 # ── Функции форматирования ────────────────────────────────────────────────────
 
-def apply_header_style(ws, column_widths: dict, headers: list = None, row_height: int = 34):
+def apply_header_style(ws, column_widths: dict, headers: list = None, row_height: int = 34, auto_filter: bool = True):
     """
     Тёмная шапка, фриз, авто-фильтр, высота строк, ширина столбцов.
 
@@ -76,7 +76,8 @@ def apply_header_style(ws, column_widths: dict, headers: list = None, row_height
         cell.border = thin_border("444444")
 
     ws.freeze_panes = "A2"
-    ws.auto_filter.ref = ws.dimensions
+    if auto_filter:
+        ws.auto_filter.ref = ws.dimensions
 
     for col_num, width in column_widths.items():
         ws.column_dimensions[get_column_letter(col_num)].width = width

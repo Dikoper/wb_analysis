@@ -104,7 +104,7 @@ def generate_summary_report(
                'Продаж/день', 'Группа', 'Цена ₽', 'Остатки по складам']
     col_widths = {1: 22, 2: 24, 3: 15, 4: 12, 5: 16, 6: 15, 7: 11, 8: 13, 9: 36}
 
-    apply_header_style(ws, col_widths, headers=headers)
+    apply_header_style(ws, col_widths, headers=headers, auto_filter=False)
 
     # Стили данных
     data_font = Font(name="Arial", size=10, color="1A1A2E")

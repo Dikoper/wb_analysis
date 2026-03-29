@@ -25,18 +25,9 @@ def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold
 
 def calc_avg_by_group(row) -> float:
     """
-    Возвращает среднее продаж в день по периоду группы.
-
-    A: по 7 дням
-    B: по 14 дням
-    C: по 30 дням
+    Возвращает среднее продаж в день за 14 дней (единый период для всех групп).
     """
-    if row['group'] == 'A':
-        return row['orders_count_7d'] / 7 if pd.notna(row['orders_count_7d']) else 0
-    elif row['group'] == 'B':
-        return row['orders_count_14d'] / 14 if pd.notna(row['orders_count_14d']) else 0
-    else:  # C
-        return row['avg_per_day_30d']
+    return row['orders_count_14d'] / 14 if pd.notna(row['orders_count_14d']) else 0
 
 
 def calc_days_remaining(row) -> float:
