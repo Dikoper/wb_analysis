@@ -64,7 +64,13 @@ def fetch_with_retry(url: str, token: str, retries: int = 3, delay: int = 5) -> 
         try:
             logger.info(f"Попытка {attempt}/{retries}...")
             with urllib.request.urlopen(req, timeout=180) as resp:
-                data = json.loads(resp.read().decode('utf-8'))
+                chunks = []
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                data = json.loads(b''.join(chunks).decode('utf-8'))
             return data if data else []
 
         except urllib.error.HTTPError as e:
@@ -274,6 +280,10 @@ def get_orders(days: int = 7, token: str = None) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(data)
+
+    # Исключаем отменённые заказы (isCancel=True)
+    if 'isCancel' in df.columns:
+        df = df[df['isCancel'] != True]
 
     # Группируем по nmId
     col_name = f'orders_count_{days}d'
