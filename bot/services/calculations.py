@@ -9,11 +9,11 @@ from bot.config import THRESHOLD_A, THRESHOLD_B
 
 def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold_b: float = THRESHOLD_B) -> str:
     """
-    Определяет группу товара по средним продажам в день.
+    Определяет группу товара по средним продажам в день (рассчитанным за 14д).
 
-    A: ≥threshold_a шт/день (ходовые) — анализ за 7 дней
-    B: ≥threshold_b шт/день — анализ за 14 дней
-    C: <threshold_b шт/день (редкие) — анализ за 30 дней
+    A: ≥threshold_a шт/день (ходовые)
+    B: ≥threshold_b шт/день
+    C: <threshold_b шт/день (редкие)
     """
     if avg_per_day >= threshold_a:
         return 'A'

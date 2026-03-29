@@ -19,7 +19,7 @@ async def save_product_data(store_id: int, rows: list[dict]):
                 '''INSERT INTO product_data
                    (store_id, nm_id, supplier_article, subject, category,
                     product_group, stock_qty, in_way_from_client, stock_qty_clean,
-                    orders_7d, orders_14d, orders_30d,
+                    orders_7d, orders_14d, orders_30d,  -- orders_30d: больше не запрашивается, всегда NULL
                     avg_per_day, days_remaining, price_increase_pct, price)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 (store_id, row['nm_id'], row.get('supplier_article'),

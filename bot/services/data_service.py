@@ -9,10 +9,10 @@ import logging
 
 import pandas as pd
 
-from bot.services.wb_client import get_orders, get_stocks, get_stocks_detailed, get_prices
+from bot.services.wb_client import get_orders_multi, get_stocks, get_stocks_detailed, get_prices
 from bot.services.calculations import (
-    assign_group, calc_avg_by_group, calc_days_remaining, get_price_increase,
-    merge_orders_stocks, calc_avg_per_day,
+    assign_group, calc_days_remaining, get_price_increase,
+    merge_orders_stocks,
 )
 from bot.config import THRESHOLD_A, THRESHOLD_B, DATA_CACHE_TTL
 from bot.db import (
@@ -39,26 +39,25 @@ def fetch_store_data(
     """
     logger.info("=== Загрузка данных из WB API ===")
 
-    # === 1. Загрузка данных за 30 дней ===
+    # === 1. Один запрос за 14д — из него вычисляются 7д и 14д (оптимизация: было 3 запроса) ===
     try:
-        logger.info("Загрузка заказов за 30 дней...")
-        orders_30d = get_orders(30, token=token)
-        logger.info(f"✓ Заказы 30д: {len(orders_30d)} записей")
+        logger.info("Загрузка заказов за 14 дней (единый запрос)...")
+        orders = get_orders_multi(token=token)
+        logger.info(f"✓ Заказы: {len(orders)} товаров (7д + 14д из одного запроса)")
     except Exception as e:
-        logger.error(f"✗ Ошибка загрузки заказов 30д: {e}")
+        logger.error(f"✗ Ошибка загрузки заказов: {e}")
         raise
 
     try:
         logger.info("Загрузка остатков...")
-        stocks = get_stocks(orders_30d['nmId'].tolist(), token=token)
+        stocks = get_stocks(orders['nmId'].tolist(), token=token)
         logger.info(f"✓ Остатки: {len(stocks)} записей")
     except Exception as e:
         logger.error(f"✗ Ошибка загрузки остатков: {e}")
         raise
 
     # Объединяем заказы и остатки
-    df = merge_orders_stocks(orders_30d, stocks)
-    df = calc_avg_per_day(df, days=30)
+    df = merge_orders_stocks(orders, stocks)
 
     # Заполняем поля возвратов если отсутствуют после merge
     for col in ['in_way_from_client', 'stock_qty_clean']:
@@ -72,42 +71,17 @@ def fetch_store_data(
 
     logger.info(f"Объединено товаров: {len(df)}")
 
-    # === 2. Группировка товаров (A/B/C) ===
-    df['group'] = df['avg_per_day_30d'].apply(lambda x: assign_group(x, threshold_a, threshold_b))
+    # === 2. Группировка A/B/C по среднему за 14д (ранее использовались 30д) ===
+    df['avg_per_day'] = df['orders_count_14d'] / 14
+    df['group'] = df['avg_per_day'].apply(lambda x: assign_group(x, threshold_a, threshold_b))
 
-    # === 3. Загрузка данных за 7 и 14 дней ===
-    try:
-        logger.info("Загрузка заказов за 7 дней...")
-        orders_7d = get_orders(7, token=token)
-        orders_7d = orders_7d[['nmId', 'orders_count_7d']]
-        logger.info(f"✓ Заказы 7д: {len(orders_7d)} записей")
-    except Exception as e:
-        logger.error(f"✗ Ошибка загрузки заказов 7д: {e}")
-        raise
-
-    try:
-        logger.info("Загрузка заказов за 14 дней...")
-        orders_14d = get_orders(14, token=token)
-        orders_14d = orders_14d[['nmId', 'orders_count_14d']]
-        logger.info(f"✓ Заказы 14д: {len(orders_14d)} записей")
-    except Exception as e:
-        logger.error(f"✗ Ошибка загрузки заказов 14д: {e}")
-        raise
-
-    # Присоединяем к основной таблице
-    df = df.merge(orders_7d, on='nmId', how='left')
-    df = df.merge(orders_14d, on='nmId', how='left')
-
-    # === 4. Расчёт среднего по группе ===
-    df['avg_per_day'] = df.apply(calc_avg_by_group, axis=1)
-
-    # === 5. Расчёт days_remaining ===
+    # === 3. Расчёт days_remaining ===
     df['days_remaining'] = df.apply(calc_days_remaining, axis=1)
 
-    # === 6. Расчёт % повышения цены ===
+    # === 4. Расчёт % повышения цены ===
     df['price_increase_pct'] = df['days_remaining'].apply(lambda d: get_price_increase(d, days_threshold))
 
-    # === 7. Загрузка цен ===
+    # === 5. Загрузка цен ===
     try:
         logger.info("Загрузка цен...")
         prices_map = get_prices(df['nmId'].tolist(), token=token)
@@ -133,7 +107,7 @@ def fetch_store_data(
             'stock_qty_clean': int(row['stock_qty_clean']),
             'orders_7d': int(row['orders_count_7d']) if pd.notna(row.get('orders_count_7d')) else None,
             'orders_14d': int(row['orders_count_14d']) if pd.notna(row.get('orders_count_14d')) else None,
-            'orders_30d': int(row['orders_count_30d']),
+            'orders_30d': None,  # больше не запрашивается, колонка сохранена для совместимости БД
             'avg_per_day': round(row['avg_per_day'], 4),
             'days_remaining': round(row['days_remaining'], 2) if row['days_remaining'] is not None else None,
             'price_increase_pct': int(row['price_increase_pct']),

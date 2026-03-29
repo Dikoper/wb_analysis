@@ -295,3 +295,52 @@ def get_orders(days: int = 7, token: str = None) -> pd.DataFrame:
     }).rename(columns={'nmId': col_name}).reset_index()
 
     return grouped
+
+
+def get_orders_multi(token: str = None) -> pd.DataFrame:
+    """
+    Оптимизированная загрузка: 1 запрос за 14 дней, из него вычисляются 7д и 14д.
+    Заменяет 3 отдельных вызова get_orders(30/14/7).
+
+    Returns:
+        DataFrame с колонками: nmId, supplierArticle, subject, category,
+        orders_count_7d, orders_count_14d
+    """
+    if token is None:
+        token = get_token()
+
+    # Один запрос за 14 дней — покрывает и 7д как подмножество
+    date_from_14 = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+    date_from_7 = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+    url = f"{API_ORDERS}?dateFrom={date_from_14}"
+    data = fetch_with_retry(url, token)
+
+    if not data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data)
+
+    # Исключаем отменённые заказы
+    if 'isCancel' in df.columns:
+        df = df[df['isCancel'] != True]
+
+    # Все 14д — группируем по nmId
+    grouped_14 = df.groupby('nmId').agg({
+        'supplierArticle': 'first',
+        'subject': 'first',
+        'category': 'first',
+        'nmId': 'count'
+    }).rename(columns={'nmId': 'orders_count_14d'}).reset_index()
+
+    # 7д — фильтруем по дате из тех же данных, без повторного запроса
+    df_7 = df[df['date'] >= date_from_7]
+    grouped_7 = df_7.groupby('nmId').agg({
+        'nmId': 'count'
+    }).rename(columns={'nmId': 'orders_count_7d'}).reset_index()
+
+    # Объединяем 14д и 7д в один DataFrame
+    result = grouped_14.merge(grouped_7, on='nmId', how='left')
+    result['orders_count_7d'] = result['orders_count_7d'].fillna(0).astype(int)
+
+    return result
