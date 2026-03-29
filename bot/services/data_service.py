@@ -9,9 +9,12 @@ import logging
 
 import pandas as pd
 
-from wb_api import get_orders, get_stocks, get_stocks_detailed, get_prices, merge_orders_stocks, calc_avg_per_day
+from bot.services.wb_client import get_orders, get_stocks, get_stocks_detailed, get_prices
+from bot.services.calculations import (
+    assign_group, calc_avg_by_group, calc_days_remaining, get_price_increase,
+    merge_orders_stocks, calc_avg_per_day,
+)
 from bot.config import THRESHOLD_A, THRESHOLD_B, DATA_CACHE_TTL
-from bot.calculations import assign_group, calc_avg_by_group, calc_days_remaining, get_price_increase
 from bot.db import (
     is_data_fresh, get_latest_product_data, save_product_data,
     is_warehouse_data_fresh, get_latest_warehouse_data, save_warehouse_data,

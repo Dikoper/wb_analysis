@@ -10,10 +10,10 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 
 from bot.keyboards import MenuCB, SettingsCB, NavCB, SubscribeCB, settings_kb, calc_params_kb, cancel_kb
-from bot.states import MenuStates
+from bot.core.states import MenuStates
 from bot.config import REPORT_TIME as DEFAULT_REPORT_TIME, DEFAULT_DAYS_N, THRESHOLD_A as DEFAULT_THRESHOLD_A, THRESHOLD_B as DEFAULT_THRESHOLD_B
 from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber
-from bot.scheduler import reschedule_daily_reports
+from bot.services.scheduler import reschedule_daily_reports
 
 logger = logging.getLogger(__name__)
 

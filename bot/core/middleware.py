@@ -9,7 +9,7 @@ from aiogram import BaseMiddleware
 
 from bot.config import BOT_PASSWORD
 from bot.db import is_authorized
-from bot.states import MenuStates
+from bot.core.states import MenuStates
 
 logger = logging.getLogger(__name__)
 

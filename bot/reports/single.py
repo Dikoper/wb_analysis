@@ -7,11 +7,10 @@ import re
 import logging
 from datetime import datetime
 
-import pytz
 import pandas as pd
 
-from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
-from bot.excel_styles import (
+from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR, MSK_TZ
+from bot.reports.excel_styles import (
     apply_header_style,
     apply_data_style,
     apply_hyperlinks,
@@ -69,7 +68,7 @@ def generate_report_from_data(
     # Сохранение Excel
     os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
+    timestamp = datetime.now(MSK_TZ).strftime('%Y%m%d_%H%M')
     safe_name = re.sub(r'[^\w\s-]', '', store_name).strip()[:50] if store_name else ""
     name_part = f"_{safe_name}" if safe_name else ""
     output_path = os.path.join(REPORTS_DIR, f'price_report{name_part}_{timestamp}.xlsx')

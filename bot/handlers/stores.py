@@ -13,9 +13,9 @@ from bot.keyboards import (
     SettingsCB, StoreCB, NavCB,
     store_management_kb, confirm_delete_kb, cancel_kb, store_display_name,
 )
-from bot.states import MenuStates
+from bot.core.states import MenuStates
 from bot.db import get_stores, get_store, add_store, update_store, delete_store, log_action
-from wb_api import get_seller_info, WBTokenError
+from bot.services.wb_client import get_seller_info, WBTokenError
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@
 import os
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiogram import Router, F
 from aiogram.types import CallbackQuery, FSInputFile
@@ -19,9 +19,9 @@ from bot.db import (
     get_stores, get_store, get_last_report, save_report_history, get_setting,
     log_action,
 )
-from bot.data_service import fetch_or_cache_product
-from bot.report_single import generate_report_from_data
-from wb_api import WBTokenError
+from bot.services.data_service import fetch_or_cache_product
+from bot.reports.single import generate_report_from_data
+from bot.services.wb_client import WBTokenError
 
 logger = logging.getLogger(__name__)
 

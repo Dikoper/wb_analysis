@@ -7,13 +7,12 @@ import re
 import logging
 from datetime import datetime
 
-import pytz
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Side
 
-from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
-from bot.calculations import aggregate_by_article
-from bot.excel_styles import (
+from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR, MSK_TZ
+from bot.services.calculations import aggregate_by_article
+from bot.reports.excel_styles import (
     HEADER_BG, HEADER_FG, GROUP_COLORS, WB_CABINET_URL,
     CMP_RAISE_BG, CMP_LOWER_BG, CMP_PAIR_ALT_BG,
     thin_border, fill,
@@ -232,7 +231,7 @@ def generate_comparison_report(
         return re.sub(r'[^\w-]', '', short).strip()[:20]
 
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
+    timestamp = datetime.now(MSK_TZ).strftime('%Y%m%d_%H%M')
     output_path = os.path.join(
         REPORTS_DIR,
         f'comparison_{_short_name(store1_name)}_{_short_name(store2_name)}_{timestamp}.xlsx',

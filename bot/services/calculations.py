@@ -126,3 +126,40 @@ def merge_wh_by_name(wh_list):
         merged[name]['quantity'] += w['quantity']
         merged[name]['in_way_from_client'] += w['in_way_from_client']
     return list(merged.values())
+
+
+# ── Трансформации данных (перенесено из wb_api.py) ────────────────────────────
+
+def calc_avg_per_day(df: pd.DataFrame, days: int = 7) -> pd.DataFrame:
+    """
+    Добавляет колонку среднего заказов в день за период.
+
+    Args:
+        df: DataFrame с колонкой orders_count_{days}d
+        days: период в днях (по умолчанию 7)
+
+    Returns:
+        DataFrame с добавленной колонкой avg_per_day_{days}d
+    """
+    df = df.copy()
+    orders_col = f'orders_count_{days}d'
+    avg_col = f'avg_per_day_{days}d'
+    df[avg_col] = df[orders_col] / days
+    return df
+
+
+def merge_orders_stocks(orders: pd.DataFrame, stocks: pd.DataFrame) -> pd.DataFrame:
+    """
+    Объединяет заказы и остатки, сортирует по убыванию остатка.
+
+    Args:
+        orders: DataFrame с заказами
+        stocks: DataFrame с остатками
+
+    Returns:
+        DataFrame объединённый, отсортированный по stock_qty (убывание)
+    """
+    df = orders.merge(stocks, on='nmId', how='left')
+    df['stock_qty'] = df['stock_qty'].fillna(0).astype(int)
+    df = df.sort_values('stock_qty', ascending=False).reset_index(drop=True)
+    return df

@@ -12,14 +12,12 @@ from aiogram import Bot
 from aiogram.types import FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import pytz
-
-from bot.config import TIMEZONE
+from bot.config import TIMEZONE, MSK_TZ
 from bot.db import get_stores, get_setting, save_report_history, get_subscribers
 from bot.keyboards import store_display_name
-from bot.data_service import fetch_or_cache_product
-from bot.report_single import generate_report_from_data
-from wb_api import WBTokenError
+from bot.services.data_service import fetch_or_cache_product
+from bot.reports.single import generate_report_from_data
+from bot.services.wb_client import WBTokenError
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +54,7 @@ async def send_daily_reports(bot: Bot):
     logger.info(f"Генерация отчётов для {len(stores)} магазинов, подписчиков: {len(subscribers)}")
 
     # Шапка рассылки
-    tz = pytz.timezone(TIMEZONE)
+    tz = MSK_TZ
     now = datetime.now(tz)
     report_time = await get_setting('report_time', DEFAULT_REPORT_TIME)
     store_names = ", ".join(store_display_name(s) for s in stores)
@@ -136,7 +134,7 @@ def reschedule_daily_reports(time_str: str):
     hour, minute = map(int, time_str.split(':'))
     _scheduler.reschedule_job(
         'daily_reports',
-        trigger=CronTrigger(hour=hour, minute=minute, timezone=pytz.timezone(TIMEZONE))
+        trigger=CronTrigger(hour=hour, minute=minute, timezone=MSK_TZ)
     )
     logger.info(f"Планировщик перепланирован: отчёты в {time_str} {TIMEZONE}")
 
@@ -145,7 +143,7 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Настраивает и запускает планировщик."""
     global _scheduler, _bot
     _bot = bot
-    _scheduler = AsyncIOScheduler(timezone=pytz.timezone(TIMEZONE))
+    _scheduler = AsyncIOScheduler(timezone=MSK_TZ)
 
     report_time = await get_setting('report_time', DEFAULT_REPORT_TIME)
     hour, minute = map(int, report_time.split(':'))

@@ -17,9 +17,9 @@ from bot.config import TELEGRAM_TOKEN, BOT_PASSWORD, LOGS_DIR, REPORT_RETENTION_
 from bot.handlers import register_routers
 from bot.handlers.feedback import cleanup_old_feedback
 from bot.db import init_db, cleanup_old_reports, cleanup_old_product_data, migrate_trademarks
-from bot.middleware import AuthMiddleware
-from bot.scheduler import setup_scheduler
-from bot.security import TokenMaskFilter
+from bot.core.middleware import AuthMiddleware
+from bot.services.scheduler import setup_scheduler
+from bot.core.security import TokenMaskFilter
 
 # Создаём директорию для логов
 os.makedirs(LOGS_DIR, exist_ok=True)

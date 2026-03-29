@@ -14,15 +14,15 @@ from bot.keyboards import (
     MenuCB, CompareCB, CompareModeCB, NavCB,
     comparison_mode_kb, compare_stores_kb, store_display_name, back_to_menu_kb,
 )
-from bot.states import MenuStates
+from bot.core.states import MenuStates
 from bot.db import (
     get_stores, get_store, get_setting,
     save_report_history, log_action,
 )
-from bot.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
-from bot.report_comparison import generate_comparison_report
-from bot.report_summary import generate_summary_report
-from wb_api import WBTokenError
+from bot.services.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
+from bot.reports.comparison import generate_comparison_report
+from bot.reports.summary import generate_summary_report
+from bot.services.wb_client import WBTokenError
 
 logger = logging.getLogger(__name__)
 
@@ -131,9 +131,12 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
         threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
 
-        data1, data2 = await asyncio.gather(
-            fetch_or_cache_product(store1_id, store1['token'], days_threshold, threshold_a, threshold_b),
-            fetch_or_cache_product(store2_id, store2['token'], days_threshold, threshold_a, threshold_b),
+        data1, data2 = await asyncio.wait_for(
+            asyncio.gather(
+                fetch_or_cache_product(store1_id, store1['token'], days_threshold, threshold_a, threshold_b),
+                fetch_or_cache_product(store2_id, store2['token'], days_threshold, threshold_a, threshold_b),
+            ),
+            timeout=300,
         )
 
         await progress_msg.edit_text(
@@ -173,6 +176,13 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
         )
         await log_action(callback.from_user.id, 'comparison', f'{name1} vs {name2}')
 
+    except asyncio.TimeoutError:
+        await progress_msg.edit_text(
+            f"⏱ <b>Таймаут</b>\n\n"
+            "WB API не ответил за 5 минут. Попробуйте позже.",
+            reply_markup=back_to_menu_kb(),
+            parse_mode="HTML",
+        )
     except WBTokenError as e:
         await progress_msg.edit_text(
             f"🔑 <b>Ошибка токена</b>\n\n{e}\n\n"
@@ -231,8 +241,12 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
                 fetch_or_cache_warehouse(s['id'], s['token'])
             )
 
-        all_product_results = await asyncio.gather(*product_tasks)
-        all_warehouse_results = await asyncio.gather(*warehouse_tasks)
+        all_product_results = await asyncio.wait_for(
+            asyncio.gather(*product_tasks), timeout=300,
+        )
+        all_warehouse_results = await asyncio.wait_for(
+            asyncio.gather(*warehouse_tasks), timeout=300,
+        )
 
         # Собираем dict {store_name: data}
         all_stores_data = {}
@@ -278,6 +292,13 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
         )
         await log_action(callback.from_user.id, 'summary_report', f'{len(stores)} магазинов')
 
+    except asyncio.TimeoutError:
+        await progress_msg.edit_text(
+            f"⏱ <b>Таймаут</b>\n\n"
+            "WB API не ответил за 5 минут. Попробуйте позже.",
+            reply_markup=back_to_menu_kb(),
+            parse_mode="HTML",
+        )
     except WBTokenError as e:
         await progress_msg.edit_text(
             f"🔑 <b>Ошибка токена</b>\n\n{e}\n\n"

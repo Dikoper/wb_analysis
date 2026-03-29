@@ -1,5 +1,5 @@
 """
-Функции для работы с WB API.
+HTTP-клиент WB API: авторизация, retry, эндпоинты.
 """
 
 import json
@@ -104,41 +104,6 @@ def get_seller_info(token: str) -> dict:
     """
     data = fetch_with_retry(API_SELLER_INFO, token, retries=1)
     return data if isinstance(data, dict) else {}
-
-
-def calc_avg_per_day(df: pd.DataFrame, days: int = 7) -> pd.DataFrame:
-    """
-    Добавляет колонку среднего заказов в день за период.
-
-    Args:
-        df: DataFrame с колонкой orders_count_{days}d
-        days: период в днях (по умолчанию 7)
-
-    Returns:
-        DataFrame с добавленной колонкой avg_per_day_{days}d
-    """
-    df = df.copy()
-    orders_col = f'orders_count_{days}d'
-    avg_col = f'avg_per_day_{days}d'
-    df[avg_col] = df[orders_col] / days
-    return df
-
-
-def merge_orders_stocks(orders: pd.DataFrame, stocks: pd.DataFrame) -> pd.DataFrame:
-    """
-    Объединяет заказы и остатки, сортирует по убыванию остатка.
-
-    Args:
-        orders: DataFrame с заказами
-        stocks: DataFrame с остатками
-
-    Returns:
-        DataFrame объединённый, отсортированный по stock_qty (убывание)
-    """
-    df = orders.merge(stocks, on='nmId', how='left')
-    df['stock_qty'] = df['stock_qty'].fillna(0).astype(int)
-    df = df.sort_values('stock_qty', ascending=False).reset_index(drop=True)
-    return df
 
 
 def get_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:

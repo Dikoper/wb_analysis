@@ -6,14 +6,13 @@ import os
 import logging
 from datetime import datetime
 
-import pytz
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Side
 from openpyxl.comments import Comment
 
-from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR
-from bot.calculations import aggregate_by_article, merge_wh_by_name
-from bot.excel_styles import (
+from bot.config import THRESHOLD_A, THRESHOLD_B, REPORTS_DIR, MSK_TZ
+from bot.services.calculations import aggregate_by_article, merge_wh_by_name
+from bot.reports.excel_styles import (
     GROUP_COLORS, WB_CABINET_URL, SUMMARY_PAIR_ALT_BG,
     fill,
     apply_header_style, write_legend_block, make_group_border,
@@ -295,7 +294,7 @@ def generate_summary_report(
 
     # Сохранение
     os.makedirs(REPORTS_DIR, exist_ok=True)
-    timestamp = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%Y%m%d_%H%M')
+    timestamp = datetime.now(MSK_TZ).strftime('%Y%m%d_%H%M')
     output_path = os.path.join(REPORTS_DIR, f'summary_{timestamp}.xlsx')
 
     wb.save(output_path)
