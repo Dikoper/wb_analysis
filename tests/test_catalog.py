@@ -268,7 +268,7 @@ class TestGetStocksReport:
                     "subjectName": "Мешочки подарочные",
                     "metrics": {
                         "ordersCount": 1230,
-                        "avgOrders": 82,
+                        "avgOrders": 82.0,
                         "stockCount": 1518,
                         "fromClientCount": 29,
                         "saleRate": {"days": 46, "hours": 15},
@@ -324,6 +324,17 @@ class TestGetStocksReport:
 
         row = orders[orders['nmId'] == 198215260].iloc[0]
         assert row['orders_count_14d'] == 1230
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_avg_per_day_from_api(self, mock_post):
+        """avgOrders из API маппится в avg_per_day."""
+        mock_post.return_value = self.MOCK_RESPONSE
+        _, orders = get_stocks_report(token='test')
+
+        row = orders[orders['nmId'] == 198215260].iloc[0]
+        assert row['avg_per_day'] == 82.0
+        row2 = orders[orders['nmId'] == 185297285].iloc[0]
+        assert row2['avg_per_day'] == 50.47
 
     @patch('bot.services.wb_client.post_with_retry')
     def test_metadata_mapping(self, mock_post):

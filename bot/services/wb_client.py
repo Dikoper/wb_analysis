@@ -577,6 +577,7 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
             "category": "",
             "orders_count_14d": metrics.get("ordersCount", 0),
             "orders_count_7d": 0,  # Stocks Report не разделяет 7д/14д
+            "avg_per_day": metrics.get("avgOrders", 0),  # готовый avg от WB
         })
 
     stocks_df = pd.DataFrame(stocks_rows)

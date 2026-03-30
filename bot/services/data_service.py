@@ -137,7 +137,12 @@ def fetch_store_data(
     logger.info(f"Всего товаров в каталоге: {len(df)}")
 
     # === 5. Группировка A/B/C по среднему за 14д ===
-    df['avg_per_day'] = df['orders_count_14d'] / 14
+    # Если avg_per_day уже пришёл из Stocks Report API — используем его,
+    # иначе считаем вручную (legacy fallback)
+    if 'avg_per_day' not in df.columns or df['avg_per_day'].isna().all():
+        df['avg_per_day'] = df['orders_count_14d'] / 14
+    else:
+        df['avg_per_day'] = df['avg_per_day'].fillna(df['orders_count_14d'] / 14)
     df['group'] = df['avg_per_day'].apply(lambda x: assign_group(x, threshold_a, threshold_b))
 
     # === 6. Расчёт days_remaining ===
