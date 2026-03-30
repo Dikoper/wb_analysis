@@ -223,17 +223,17 @@ async def ask_group_thresholds(callback: CallbackQuery, state: FSMContext):
     threshold_b = float(await get_setting('calc_threshold_b', str(DEFAULT_THRESHOLD_B)))
     threshold_c = float(await get_setting('calc_threshold_c', str(DEFAULT_THRESHOLD_C)))
     await callback.message.edit_text(
-        "📦 <b>Характеристики групп товаров</b>\n\n"
-        f"Текущие: A≥{threshold_a} ; B≥{threshold_b} ; D&lt;{threshold_c}\n\n"
-        "Введите пороги через точку с запятой:\n"
-        "<code>порог_A ; порог_B ; порог_D</code>\n"
+        "📦 <b>Группы товаров по скорости продаж</b>\n\n"
+        f"Текущие пороги (шт/день):\n"
+        f"  <b>A</b> ≥ {threshold_a} — ходовые\n"
+        f"  <b>B</b> ≥ {threshold_b} — средние\n"
+        f"  <b>C</b> ≥ {threshold_c} — редкие\n"
+        f"  <b>D</b> <; {threshold_c} — почти не продаются\n\n"
+        "Введите три порога через точку с запятой:\n"
+        "<code>A ; B ; C</code>\n"
         "Пример: <code>4 ; 0.5 ; 0.2</code>\n\n"
-        "📌 Группы (продаж/день):\n"
-        f"  • <b>A</b> ≥ {threshold_a} — ходовые\n"
-        f"  • <b>B</b> ≥ {threshold_b} — средние\n"
-        f"  • <b>C</b> ≥ {threshold_c} — редкие\n"
-        f"  • <b>D</b> &lt; {threshold_c} — почти не продаются\n\n"
-        "Порог_D отсекает товары с единичными продажами (реже 1 шт/неделю).",
+        "Порог C отсекает товары с единичными продажами\n"
+        f"(сейчас <;{threshold_c} — реже 1 шт/неделю → группа D).",
         reply_markup=_back_to_calc_params_kb(),
         parse_mode="HTML"
     )
@@ -260,9 +260,10 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
         await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
 
     error_msg = (
-        "❌ Неверный формат. Введите три числа через точку с запятой.\n"
+        "❌ Неверный формат. Введите три числа через точку с запятой:\n"
+        "<code>A ; B ; C</code>\n"
         "Пример: <code>4 ; 0.5 ; 0.2</code>\n"
-        "Обязательно: порог_A > порог_B > порог_D > 0."
+        "Обязательно: A >; B >; C >; 0."
     )
 
     parts = text.split(';')
@@ -273,14 +274,14 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
     try:
         a = float(parts[0].strip())
         b = float(parts[1].strip())
-        d = float(parts[2].strip()) if len(parts) == 3 else DEFAULT_THRESHOLD_C
+        c = float(parts[2].strip()) if len(parts) == 3 else DEFAULT_THRESHOLD_C
     except ValueError:
         await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
         return
 
-    if not (a > b > d > 0):
+    if not (a > b > c > 0):
         await edit_bot_msg(
-            "❌ Ошибка: числа должны быть > 0 и порог_A > порог_B > порог_D.\n\n"
+            "❌ Пороги должны быть >; 0 и идти по убыванию: A >; B >; C.\n\n"
             + error_msg,
             reply_markup=_back_to_calc_params_kb()
         )
@@ -288,13 +289,13 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
 
     await set_setting('calc_threshold_a', str(a))
     await set_setting('calc_threshold_b', str(b))
-    await set_setting('calc_threshold_c', str(d))
+    await set_setting('calc_threshold_c', str(c))
     await state.clear()
 
     days_n = int(await get_setting('calc_days_threshold', str(DEFAULT_DAYS_N)))
     await edit_bot_msg(
-        f"✅ Группы обновлены: A≥{a} · B≥{b} · C≥{d} · D<{d}\n\n"
+        f"✅ Пороги обновлены: A≥{a} · B≥{b} · C≥{c} · D<;{c}\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(days_n, a, b, d)
+        reply_markup=calc_params_kb(days_n, a, b, c)
     )
-    logger.info(f"calc_threshold_a={a}, calc_threshold_b={b}, calc_threshold_c={d}")
+    logger.info(f"calc_threshold: A={a}, B={b}, C={c}")
