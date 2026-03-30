@@ -333,7 +333,7 @@ def get_stocks_detailed(nm_ids: list = None, token: str = None, _raw_df: pd.Data
     return df[cols].reset_index(drop=True)
 
 
-def get_prices(nm_ids: list = None, token: str = None) -> dict:
+def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict]:
     """
     Получает цены товаров (после скидки) через Prices API.
 
@@ -342,13 +342,16 @@ def get_prices(nm_ids: list = None, token: str = None) -> dict:
         token: токен WB API
 
     Returns:
-        dict {nmID: discountedPrice} — минимальная цена среди размеров
+        tuple (prices, articles):
+            prices: dict {nmID: discountedPrice} — минимальная цена среди размеров
+            articles: dict {nmID: vendorCode} — артикулы продавца
     """
     if token is None:
         token = get_token()
 
     nm_set = set(nm_ids) if nm_ids else None
     prices = {}
+    articles = {}
     limit = 1000
     offset = 0
 
@@ -367,6 +370,7 @@ def get_prices(nm_ids: list = None, token: str = None) -> dict:
             nm_id = item.get('nmID')
             if nm_set is not None and nm_id not in nm_set:
                 continue
+            articles[nm_id] = item.get('vendorCode', '')
             sizes = item.get('sizes', [])
             if sizes:
                 discounted = [s.get('discountedPrice') for s in sizes
@@ -380,7 +384,7 @@ def get_prices(nm_ids: list = None, token: str = None) -> dict:
         offset += limit
 
     logger.info(f"Загружено цен: {len(prices)}")
-    return prices
+    return prices, articles
 
 
 def get_orders(days: int = 7, token: str = None) -> pd.DataFrame:

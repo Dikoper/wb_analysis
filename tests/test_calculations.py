@@ -33,8 +33,8 @@ class TestAssignGroup:
     def test_group_c(self):
         assert assign_group(0.3) == 'C'
 
-    def test_group_c_zero(self):
-        assert assign_group(0) == 'C'
+    def test_group_d_zero(self):
+        assert assign_group(0) == 'D'
 
     def test_custom_thresholds(self):
         assert assign_group(2.0, threshold_a=10, threshold_b=5) == 'C'
@@ -196,7 +196,7 @@ class TestAggregateByArticle:
         result = aggregate_by_article(rows)
         assert len(result) == 0
 
-    def test_zero_sales_group_c(self, product_rows):
+    def test_zero_sales_group_d(self, product_rows):
         result = aggregate_by_article(product_rows)
-        assert result['ART-3']['product_group'] == 'C'
+        assert result['ART-3']['product_group'] == 'D'
         assert result['ART-3']['days_remaining'] is None

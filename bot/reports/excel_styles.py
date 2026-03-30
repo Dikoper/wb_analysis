@@ -17,6 +17,7 @@ GROUP_COLORS = {
     "A": "B7E4C7",  # мятный зелёный
     "B": "FFD6A5",  # персиковый
     "C": "C8B6E2",  # лавандовый
+    "D": "D6D6D6",  # серый
 }
 
 # Градиент повышения цены: {%: (фон, цвет_текста)}
@@ -154,8 +155,9 @@ def apply_legend_style(ws, start_row: int, has_threshold_row: bool = False):
     ws.cell(row=start_row + 1, column=1).font = row_font
     ws.cell(row=start_row + 2, column=1).font = row_font
     ws.cell(row=start_row + 3, column=1).font = row_font
+    ws.cell(row=start_row + 4, column=1).font = row_font
     if has_threshold_row:
-        ws.cell(row=start_row + 4, column=1).font = note_font
+        ws.cell(row=start_row + 5, column=1).font = note_font
 
     # Итоговые строки листа 2 (на 4 строки выше start_row: пустая + 2 итога + пустая)
     summary_row = start_row - 4
@@ -290,13 +292,17 @@ def write_store_row(
     c.number_format = "0"
 
     # E: Дней осталось
+    avg = store_data.get('avg_per_day', 0)
     dr = store_data.get('days_remaining')
-    c = ws.cell(row=row_num, column=5, value=dr)
+    if avg == 0:
+        c = ws.cell(row=row_num, column=5, value="—")
+    else:
+        c = ws.cell(row=row_num, column=5, value=dr)
+        if dr is not None:
+            c.number_format = "0.0"
     c.font = DATA_FONT
     c.alignment = CENTER
     c.border = _border(5)
-    if dr is not None:
-        c.number_format = "0.0"
 
     # F: Продаж/день
     c = ws.cell(row=row_num, column=6, value=store_data.get('avg_per_day', 0))

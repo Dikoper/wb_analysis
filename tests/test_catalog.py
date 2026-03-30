@@ -25,13 +25,14 @@ class TestGetPricesFix:
     def test_zero_discounted_price(self, mock_fetch):
         """Товар с discountedPrice=0 попадает в результат."""
         mock_fetch.return_value = self._mock_prices_response([
-            {'nmID': 1, 'sizes': [{'discountedPrice': 0}]},
-            {'nmID': 2, 'sizes': [{'discountedPrice': 500}]},
+            {'nmID': 1, 'vendorCode': 'ART-1', 'sizes': [{'discountedPrice': 0}]},
+            {'nmID': 2, 'vendorCode': 'ART-2', 'sizes': [{'discountedPrice': 500}]},
         ])
-        result = get_prices(token='test')
-        assert 1 in result
-        assert result[1] == 0
-        assert result[2] == 500
+        prices, articles = get_prices(token='test')
+        assert 1 in prices
+        assert prices[1] == 0
+        assert prices[2] == 500
+        assert articles[1] == 'ART-1'
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_empty_sizes(self, mock_fetch):
@@ -40,10 +41,10 @@ class TestGetPricesFix:
             {'nmID': 1, 'sizes': []},
             {'nmID': 2, 'sizes': [{'discountedPrice': 100}]},
         ])
-        result = get_prices(token='test')
-        assert 1 in result
-        assert result[1] == 0
-        assert result[2] == 100
+        prices, articles = get_prices(token='test')
+        assert 1 in prices
+        assert prices[1] == 0
+        assert prices[2] == 100
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_none_discounted_price(self, mock_fetch):
@@ -51,9 +52,9 @@ class TestGetPricesFix:
         mock_fetch.return_value = self._mock_prices_response([
             {'nmID': 1, 'sizes': [{'discountedPrice': None}]},
         ])
-        result = get_prices(token='test')
-        assert 1 in result
-        assert result[1] == 0
+        prices, articles = get_prices(token='test')
+        assert 1 in prices
+        assert prices[1] == 0
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_mixed_sizes(self, mock_fetch):
@@ -65,8 +66,8 @@ class TestGetPricesFix:
                 {'discountedPrice': 400},
             ]},
         ])
-        result = get_prices(token='test')
-        assert result[1] == 200
+        prices, articles = get_prices(token='test')
+        assert prices[1] == 200
 
 
 # ── get_catalog: Content API ─────────────────────────────────────────────────
@@ -152,7 +153,7 @@ class TestFetchStoreDataRecovery:
             100: {'supplierArticle': 'ART-1', 'subject': 'Футболка', 'category': 'Одежда'},
             500: {'supplierArticle': 'ART-5', 'subject': 'Шарф', 'category': 'Аксессуары'},
         }
-        mock_prices.return_value = {100: 1500, 500: 800}
+        mock_prices.return_value = ({100: 1500, 500: 800}, {100: 'ART-1', 500: 'ART-5'})
         mock_stocks.return_value = pd.DataFrame({
             'nmId': [100],
             'stock_qty': [50],
@@ -193,7 +194,7 @@ class TestFetchStoreDataRecovery:
     ):
         """При ошибке Content API пайплайн работает через prices_map."""
         mock_catalog.side_effect = Exception("Content API timeout")
-        mock_prices.return_value = {100: 1500, 600: 900}
+        mock_prices.return_value = ({100: 1500, 600: 900}, {100: 'ART-1', 600: 'ART-6'})
         mock_stocks.return_value = pd.DataFrame({
             'nmId': [100],
             'stock_qty': [50],
@@ -226,7 +227,7 @@ class TestFetchStoreDataRecovery:
         mock_catalog.return_value = {
             100: {'supplierArticle': 'ART-1', 'subject': 'Футболка', 'category': 'Одежда'},
         }
-        mock_prices.return_value = {100: 1500}
+        mock_prices.return_value = ({100: 1500}, {100: 'ART-1'})
         # stocks без метаданных
         mock_stocks.return_value = pd.DataFrame({
             'nmId': [100],

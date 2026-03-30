@@ -12,15 +12,18 @@ def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold
     Определяет группу товара по средним продажам в день (рассчитанным за 14д).
 
     A: ≥threshold_a шт/день (ходовые)
-    B: ≥threshold_b шт/день
+    B: ≥threshold_b шт/день (средние)
     C: <threshold_b шт/день (редкие)
+    D: 0 шт/день (не продаются)
     """
     if avg_per_day >= threshold_a:
         return 'A'
     elif avg_per_day >= threshold_b:
         return 'B'
-    else:
+    elif avg_per_day > 0:
         return 'C'
+    else:
+        return 'D'
 
 
 def calc_avg_by_group(row) -> float:

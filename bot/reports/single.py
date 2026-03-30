@@ -45,19 +45,15 @@ def _build_wh_index(warehouse_rows: list[dict], product_rows: list[dict]) -> dic
 
 def _apply_stock_comments(ws, df: pd.DataFrame, stock_col: int, wh_index: dict):
     """
-    Форматирует ячейки остатка как 'qty (+возвр)' и добавляет Comment с детализацией.
+    Добавляет Comment с детализацией по складам к ячейкам остатка.
+    Значение ячейки (stock_qty_clean) уже записано как число через DataFrame export.
     """
     for i, (_, row) in enumerate(df.iterrows()):
         row_num = i + 2  # строка 1 — шапка
         nm_id = int(row['nm_id'])
-        stock_qty = int(row.get('stock_qty', 0))
-        iwfc = int(row.get('in_way_from_client', 0))
-
-        # Формат ячейки: qty (+возвр)
-        display = f"{stock_qty} (+{iwfc})" if iwfc > 0 else str(stock_qty)
-        cell = ws.cell(row=row_num, column=stock_col, value=display)
 
         # Комментарий с детализацией по складам
+        cell = ws.cell(row=row_num, column=stock_col)
         wh_list = wh_index.get(nm_id, [])
         if wh_list:
             wh_list = merge_wh_by_name(wh_list)
@@ -77,6 +73,15 @@ def _apply_price_comments(ws, df: pd.DataFrame, price_col: int):
             comment.width = 200
             comment.height = 50
             cell.comment = comment
+
+
+def _format_days_remaining(ws, df: pd.DataFrame, days_col: int):
+    """Заменяет пустые ячейки 'Дней осталось' на '—' для товаров без продаж."""
+    for i, (_, row) in enumerate(df.iterrows()):
+        if row.get('avg_per_day', 0) == 0:
+            cell = ws.cell(row=i + 2, column=days_col)
+            cell.value = "—"
+            cell.number_format = "@"
 
 
 def _apply_product_links(ws, article_col: int, nm_id_col: int):
@@ -155,7 +160,7 @@ def generate_report_from_data(
         # ── Лист 1: На исходе ────────────────────────────────────────────
         report_export = report[[
             'supplier_article', 'nm_id', 'product_group',
-            'stock_qty', 'in_way_from_client',
+            'stock_qty_clean', 'in_way_from_client',
             'avg_per_day', 'days_remaining', 'price'
         ]].copy()
         report_export.columns = [
@@ -175,7 +180,7 @@ def generate_report_from_data(
         # ── Лист 3: Все товары ───────────────────────────────────────────
         all_export = all_products[[
             'supplier_article', 'nm_id', 'product_group',
-            'stock_qty', 'in_way_from_client',
+            'stock_qty_clean', 'in_way_from_client',
             'avg_per_day', 'days_remaining', 'price'
         ]].copy()
         all_export.columns = [
@@ -200,12 +205,15 @@ def generate_report_from_data(
         # --- Лист 1: На исходе ---
         # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=_iwfc, 6=Продаж/день, 7=Дней осталось, 8=Цена
         apply_header_style(ws1, {1: 24, 2: 15, 3: 11, 4: 15, 5: 0, 6: 15, 7: 17, 8: 13})
-        apply_data_style(ws1, float_cols=[6, 7, 8], int_cols=[])
+        apply_data_style(ws1, float_cols=[6, 7, 8], int_cols=[4])
         apply_hyperlinks(ws1, link_col=2)
         apply_group_colors(ws1, group_col=3)
 
         # Скрыть вспомогательную колонку _iwfc (col 5)
         ws1.column_dimensions['E'].hidden = True
+
+        # Прочерк для товаров без продаж (col 7)
+        _format_days_remaining(ws1, report, days_col=7)
 
         # Комментарии к остаткам (col 4) и ценам (col 8)
         _apply_stock_comments(ws1, report, stock_col=4, wh_index=wh_index)
@@ -220,12 +228,15 @@ def generate_report_from_data(
         # --- Лист 3: Все товары ---
         # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=_iwfc, 6=Продаж/день, 7=Дней осталось, 8=Цена
         apply_header_style(ws3, {1: 24, 2: 15, 3: 11, 4: 15, 5: 0, 6: 15, 7: 17, 8: 13})
-        apply_data_style(ws3, float_cols=[6, 7, 8], int_cols=[])
+        apply_data_style(ws3, float_cols=[6, 7, 8], int_cols=[4])
         apply_hyperlinks(ws3, link_col=2)
         apply_group_colors(ws3, group_col=3)
 
         # Скрыть вспомогательную колонку _iwfc (col 5)
         ws3.column_dimensions['E'].hidden = True
+
+        # Прочерк для товаров без продаж (col 7)
+        _format_days_remaining(ws3, all_products, days_col=7)
 
         # Комментарии к остаткам (col 4)
         _apply_stock_comments(ws3, all_products, stock_col=4, wh_index=wh_index)
@@ -239,7 +250,8 @@ def generate_report_from_data(
         ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день)')
         ws1.cell(row=ws1_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день)')
         ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день)')
-        ws1.cell(row=ws1_last + 4, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
+        ws1.cell(row=ws1_last + 4, column=1, value='D: не продаются (0 шт/день)')
+        ws1.cell(row=ws1_last + 5, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
         apply_legend_style(ws1, ws1_last, has_threshold_row=True)
 
         ws2_last = last_row + 4
@@ -247,6 +259,7 @@ def generate_report_from_data(
         ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день)')
         ws2.cell(row=ws2_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день)')
         ws2.cell(row=ws2_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день)')
+        ws2.cell(row=ws2_last + 4, column=1, value='D: не продаются (0 шт/день)')
         apply_legend_style(ws2, ws2_last, has_threshold_row=False)
 
     logger.info(f"✓ Отчёт сохранён: {output_path}")

@@ -51,11 +51,12 @@ def fetch_store_data(
     # === 2. Цены ===
     try:
         logger.info("Загрузка цен...")
-        prices_map = get_prices(nm_ids=None, token=token)
+        prices_map, prices_articles = get_prices(nm_ids=None, token=token)
         logger.info(f"✓ Цены: {len(prices_map)} товаров")
     except Exception as e:
         logger.warning(f"Не удалось загрузить цены: {e}")
         prices_map = {}
+        prices_articles = {}
 
     # Fallback: если каталог не загрузился, используем prices_map как источник ID
     if catalog is None:
@@ -117,6 +118,12 @@ def fetch_store_data(
         if mask.any():
             df.loc[mask, col] = df.loc[mask, 'nmId'].map(
                 lambda nm: catalog.get(nm, {}).get(col, ''))
+
+    # === 7b. Fallback артикулов из Prices API (для товаров не в каталоге) ===
+    mask = df['supplierArticle'].isna() | (df['supplierArticle'] == '')
+    if mask.any():
+        df.loc[mask, 'supplierArticle'] = df.loc[mask, 'nmId'].map(
+            lambda nm: prices_articles.get(nm, ''))
 
     logger.info(f"Всего товаров в каталоге: {len(df)}")
 
