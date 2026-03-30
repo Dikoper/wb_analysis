@@ -9,7 +9,10 @@ import logging
 
 import pandas as pd
 
-from bot.services.wb_client import get_orders_multi, get_stocks, get_stocks_detailed, get_prices, get_catalog, _fetch_raw_stocks
+from bot.services.wb_client import (
+    get_orders_multi, get_stocks, get_stocks_detailed, get_prices, get_catalog,
+    _fetch_raw_stocks, get_stocks_report,
+)
 from bot.services.calculations import (
     assign_group, calc_days_remaining, get_price_increase,
     merge_orders_stocks,
@@ -62,24 +65,30 @@ def fetch_store_data(
     if catalog is None:
         catalog = {nm: {} for nm in prices_map}
 
-    # === 3. Остатки — один запрос, два представления ===
+    # === 3-4. Остатки + Заказы ===
+    # Основной источник: Stocks Report API (замена deprecated Statistics API)
+    # Fallback: legacy Statistics Stocks + Orders (на случай недоступности)
     try:
-        logger.info("Загрузка остатков...")
-        raw_stocks = _fetch_raw_stocks(nm_ids=None, token=token)
-        stocks = get_stocks(_raw_df=raw_stocks)
-        logger.info(f"✓ Остатки: {len(stocks)} товаров")
+        logger.info("Загрузка остатков и заказов (Stocks Report API)...")
+        stocks, orders = get_stocks_report(token=token)
+        logger.info(f"✓ Stocks Report: {len(stocks)} товаров")
     except Exception as e:
-        logger.error(f"✗ Ошибка загрузки остатков: {e}")
-        raise
-
-    # === 4. Заказы за 14д ===
-    try:
-        logger.info("Загрузка заказов за 14 дней...")
-        orders = get_orders_multi(token=token)
-        logger.info(f"✓ Заказы: {len(orders)} товаров с заказами")
-    except Exception as e:
-        logger.error(f"✗ Ошибка загрузки заказов: {e}")
-        raise
+        logger.warning(f"Stocks Report недоступен: {e}. Fallback на legacy API.")
+        try:
+            logger.info("Загрузка остатков (legacy)...")
+            raw_stocks = _fetch_raw_stocks(nm_ids=None, token=token)
+            stocks = get_stocks(_raw_df=raw_stocks)
+            logger.info(f"✓ Остатки: {len(stocks)} товаров")
+        except Exception as e2:
+            logger.error(f"✗ Ошибка загрузки остатков: {e2}")
+            raise
+        try:
+            logger.info("Загрузка заказов за 14 дней (legacy)...")
+            orders = get_orders_multi(token=token)
+            logger.info(f"✓ Заказы: {len(orders)} товаров с заказами")
+        except Exception as e2:
+            logger.error(f"✗ Ошибка загрузки заказов: {e2}")
+            raise
 
     # === 5. OUTER JOIN: stocks + orders ===
     df = merge_orders_stocks(orders, stocks)

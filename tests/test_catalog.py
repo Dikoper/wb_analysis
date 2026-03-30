@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 import pandas as pd
 import pytest
 
-from bot.services.wb_client import get_prices, get_catalog
+from bot.services.wb_client import get_prices, get_catalog, get_stocks_report
 from bot.services.data_service import fetch_store_data
 
 
@@ -145,8 +145,9 @@ class TestFetchStoreDataRecovery:
     @patch('bot.services.data_service.get_orders_multi')
     @patch('bot.services.data_service.get_stocks')
     @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
+    @patch('bot.services.data_service.get_stocks_report', side_effect=Exception("fallback"))
     def test_product_only_in_catalog_recovered(
-        self, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_sr, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
     ):
         """nm_id=500 есть только в каталоге → появляется в результате с метаданными."""
         mock_catalog.return_value = {
@@ -189,8 +190,9 @@ class TestFetchStoreDataRecovery:
     @patch('bot.services.data_service.get_orders_multi')
     @patch('bot.services.data_service.get_stocks')
     @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
+    @patch('bot.services.data_service.get_stocks_report', side_effect=Exception("fallback"))
     def test_catalog_fallback_on_error(
-        self, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_sr, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
     ):
         """При ошибке Content API пайплайн работает через prices_map."""
         mock_catalog.side_effect = Exception("Content API timeout")
@@ -220,8 +222,9 @@ class TestFetchStoreDataRecovery:
     @patch('bot.services.data_service.get_orders_multi')
     @patch('bot.services.data_service.get_stocks')
     @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
+    @patch('bot.services.data_service.get_stocks_report', side_effect=Exception("fallback"))
     def test_metadata_enrichment_from_catalog(
-        self, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_sr, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
     ):
         """Товар в stocks без метаданных — обогащается из каталога."""
         mock_catalog.return_value = {
@@ -249,3 +252,105 @@ class TestFetchStoreDataRecovery:
         assert item['supplier_article'] == 'ART-1'
         assert item['subject'] == 'Футболка'
         assert item['category'] == 'Одежда'
+
+
+# ── get_stocks_report: парсинг нового API ────────────────────────────────────
+
+class TestGetStocksReport:
+    """Тесты парсинга Stocks Report API."""
+
+    MOCK_RESPONSE = {
+        "data": {
+            "items": [
+                {
+                    "nmID": 198215260,
+                    "vendorCode": "7*9бел20",
+                    "subjectName": "Мешочки подарочные",
+                    "metrics": {
+                        "ordersCount": 1230,
+                        "avgOrders": 82,
+                        "stockCount": 1518,
+                        "fromClientCount": 29,
+                        "saleRate": {"days": 46, "hours": 15},
+                    },
+                },
+                {
+                    "nmID": 185297285,
+                    "vendorCode": "10*12бел20",
+                    "subjectName": "Мешочки подарочные",
+                    "metrics": {
+                        "ordersCount": 757,
+                        "avgOrders": 50.47,
+                        "stockCount": 1387,
+                        "fromClientCount": 26,
+                        "saleRate": {"days": 41, "hours": 0},
+                    },
+                },
+            ]
+        }
+    }
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_returns_two_dataframes(self, mock_post):
+        """Возвращает (stocks_df, orders_df) с правильными колонками."""
+        mock_post.return_value = self.MOCK_RESPONSE
+        stocks, orders = get_stocks_report(token='test')
+
+        assert len(stocks) == 2
+        assert len(orders) == 2
+        assert 'nmId' in stocks.columns
+        assert 'stock_qty' in stocks.columns
+        assert 'in_way_from_client' in stocks.columns
+        assert 'stock_qty_clean' in stocks.columns
+        assert 'nmId' in orders.columns
+        assert 'orders_count_14d' in orders.columns
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_stock_qty_mapping(self, mock_post):
+        """stockCount маппится в stock_qty, fromClientCount в in_way_from_client."""
+        mock_post.return_value = self.MOCK_RESPONSE
+        stocks, _ = get_stocks_report(token='test')
+
+        row = stocks[stocks['nmId'] == 198215260].iloc[0]
+        assert row['stock_qty'] == 1518
+        assert row['in_way_from_client'] == 29
+        assert row['stock_qty_clean'] == 1518 - 29
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_orders_count_mapping(self, mock_post):
+        """ordersCount маппится в orders_count_14d."""
+        mock_post.return_value = self.MOCK_RESPONSE
+        _, orders = get_stocks_report(token='test')
+
+        row = orders[orders['nmId'] == 198215260].iloc[0]
+        assert row['orders_count_14d'] == 1230
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_metadata_mapping(self, mock_post):
+        """vendorCode → supplierArticle, subjectName → subject."""
+        mock_post.return_value = self.MOCK_RESPONSE
+        stocks, _ = get_stocks_report(token='test')
+
+        row = stocks[stocks['nmId'] == 198215260].iloc[0]
+        assert row['supplierArticle'] == '7*9бел20'
+        assert row['subject'] == 'Мешочки подарочные'
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_empty_response(self, mock_post):
+        """Пустой ответ — пустые DataFrame."""
+        mock_post.return_value = {"data": {"items": []}}
+        stocks, orders = get_stocks_report(token='test')
+        assert stocks.empty
+        assert orders.empty
+
+    @patch('bot.services.wb_client.post_with_retry')
+    def test_compatible_with_merge_orders_stocks(self, mock_post):
+        """Результат совместим с merge_orders_stocks из calculations.py."""
+        from bot.services.calculations import merge_orders_stocks
+        mock_post.return_value = self.MOCK_RESPONSE
+        stocks, orders = get_stocks_report(token='test')
+
+        merged = merge_orders_stocks(orders, stocks)
+        assert len(merged) == 2
+        assert 'stock_qty' in merged.columns
+        assert 'orders_count_14d' in merged.columns

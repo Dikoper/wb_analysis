@@ -16,11 +16,12 @@ import os
 logger = logging.getLogger(__name__)
 
 # API endpoints
-API_ORDERS = 'https://statistics-api.wildberries.ru/api/v1/supplier/orders'
-API_STOCKS = 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks'
+API_ORDERS = 'https://statistics-api.wildberries.ru/api/v1/supplier/orders'  # deprecated, удаление 23.06.2025
+API_STOCKS = 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks'  # deprecated, удаление 23.06.2025
 API_SELLER_INFO = 'https://common-api.wildberries.ru/api/v1/seller-info'
 API_PRICES = 'https://discounts-prices-api.wildberries.ru/api/v2/list/goods/filter'
 API_CONTENT_CARDS = 'https://content-api.wildberries.ru/content/v2/get/cards/list'
+API_STOCKS_REPORT = 'https://seller-analytics-api.wildberries.ru/api/v2/stocks-report/products/products'
 
 
 class WBTokenError(Exception):
@@ -479,3 +480,107 @@ def get_orders_multi(token: str = None) -> pd.DataFrame:
     result['orders_count_7d'] = result['orders_count_7d'].fillna(0).astype(int)
 
     return result
+
+
+def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Загружает данные через Seller Analytics Stocks Report (замена legacy stocks + orders).
+
+    Один POST-запрос возвращает остатки и заказы по всем товарам.
+    Формат возврата совместим с get_stocks() и get_orders_multi().
+
+    Args:
+        token: токен WB API
+        period_days: период для данных по заказам (по умолчанию 14)
+
+    Returns:
+        (stocks_df, orders_df) — два DataFrame в том же формате,
+        что возвращают get_stocks() и get_orders_multi()
+
+    Raises:
+        WBApiError: при ошибках API (включая 402 — платная подписка)
+        WBTokenError: при невалидном токене
+    """
+    if token is None:
+        token = get_token()
+
+    date_to = datetime.now()
+    date_from = date_to - timedelta(days=period_days)
+
+    all_items = []
+    offset = 0
+    page_limit = 1000
+
+    while True:
+        body = {
+            "currentPeriod": {
+                "start": date_from.strftime("%Y-%m-%d"),
+                "end": date_to.strftime("%Y-%m-%d"),
+            },
+            "stockType": "wb",
+            "skipDeletedNm": True,
+            "orderBy": {"field": "ordersCount", "mode": "desc"},
+            "availabilityFilters": [],
+            "offset": offset,
+            "limit": page_limit,
+        }
+
+        logger.info(f"Stocks Report: offset={offset}, limit={page_limit}")
+        data = post_with_retry(API_STOCKS_REPORT, token, body)
+
+        items = []
+        if isinstance(data, dict) and isinstance(data.get("data"), dict):
+            items = data["data"].get("items", [])
+        elif isinstance(data, dict) and isinstance(data.get("data"), list):
+            items = data["data"]
+
+        all_items.extend(items)
+        logger.info(f"Stocks Report: получено {len(items)} товаров (всего {len(all_items)})")
+
+        if len(items) < page_limit:
+            break
+
+        offset += page_limit
+        time.sleep(21)  # rate limit: 3 req/min
+
+    if not all_items:
+        logger.warning("Stocks Report вернул 0 товаров")
+        return pd.DataFrame(), pd.DataFrame()
+
+    # Маппинг в формат, совместимый с get_stocks() и get_orders_multi()
+    stocks_rows = []
+    orders_rows = []
+
+    for item in all_items:
+        nm_id = item.get("nmID")
+        if not nm_id:
+            continue
+
+        metrics = item.get("metrics", {})
+
+        stocks_rows.append({
+            "nmId": nm_id,
+            "stock_qty": metrics.get("stockCount", 0),
+            "in_way_from_client": metrics.get("fromClientCount", 0),
+            "stock_qty_clean": max(
+                metrics.get("stockCount", 0) - metrics.get("fromClientCount", 0), 0
+            ),
+            "supplierArticle": item.get("vendorCode", ""),
+            "subject": item.get("subjectName", ""),
+            "category": "",
+        })
+
+        orders_rows.append({
+            "nmId": nm_id,
+            "supplierArticle": item.get("vendorCode", ""),
+            "subject": item.get("subjectName", ""),
+            "category": "",
+            "orders_count_14d": metrics.get("ordersCount", 0),
+            "orders_count_7d": 0,  # Stocks Report не разделяет 7д/14д
+        })
+
+    stocks_df = pd.DataFrame(stocks_rows)
+    orders_df = pd.DataFrame(orders_rows)
+
+    logger.info(f"Stocks Report: {len(stocks_df)} товаров загружено")
+    return stocks_df, orders_df
