@@ -9,7 +9,7 @@ import logging
 
 import pandas as pd
 
-from bot.services.wb_client import get_orders_multi, get_stocks, get_stocks_detailed, get_prices, get_catalog
+from bot.services.wb_client import get_orders_multi, get_stocks, get_stocks_detailed, get_prices, get_catalog, _fetch_raw_stocks
 from bot.services.calculations import (
     assign_group, calc_days_remaining, get_price_increase,
     merge_orders_stocks,
@@ -61,10 +61,11 @@ def fetch_store_data(
     if catalog is None:
         catalog = {nm: {} for nm in prices_map}
 
-    # === 3. Остатки — все товары, без фильтра по nm_id ===
+    # === 3. Остатки — один запрос, два представления ===
     try:
         logger.info("Загрузка остатков...")
-        stocks = get_stocks(nm_ids=None, token=token)
+        raw_stocks = _fetch_raw_stocks(nm_ids=None, token=token)
+        stocks = get_stocks(_raw_df=raw_stocks)
         logger.info(f"✓ Остатки: {len(stocks)} товаров")
     except Exception as e:
         logger.error(f"✗ Ошибка загрузки остатков: {e}")
@@ -92,21 +93,22 @@ def fetch_store_data(
     df['stock_qty_original'] = df['stock_qty']
     df['stock_qty'] = df['stock_qty_clean']
 
-    # === 6. Восстановление товаров из каталога ===
+    # === 6. Восстановление товаров из каталога ∪ prices_map ===
     existing_nm_ids = set(df['nmId'].tolist())
-    missing_nm_ids = [nm for nm in catalog if nm not in existing_nm_ids]
+    all_known_ids = set(catalog.keys()) | set(prices_map.keys())
+    missing_nm_ids = [nm for nm in all_known_ids if nm not in existing_nm_ids]
     if missing_nm_ids:
-        logger.info(f"Добавлено из каталога (0 остаток, 0 заказов): {len(missing_nm_ids)}")
+        logger.info(f"Добавлено из catalog ∪ prices_map (0 остаток, 0 заказов): {len(missing_nm_ids)}")
         missing_df = pd.DataFrame({'nmId': missing_nm_ids})
         for col in ['stock_qty', 'stock_qty_original', 'in_way_from_client', 'stock_qty_clean',
                      'orders_count_7d', 'orders_count_14d']:
             missing_df[col] = 0
         missing_df['supplierArticle'] = missing_df['nmId'].map(
-            lambda nm: catalog[nm].get('supplierArticle', ''))
+            lambda nm: catalog.get(nm, {}).get('supplierArticle', ''))
         missing_df['subject'] = missing_df['nmId'].map(
-            lambda nm: catalog[nm].get('subject', ''))
+            lambda nm: catalog.get(nm, {}).get('subject', ''))
         missing_df['category'] = missing_df['nmId'].map(
-            lambda nm: catalog[nm].get('category', ''))
+            lambda nm: catalog.get(nm, {}).get('category', ''))
         df = pd.concat([df, missing_df], ignore_index=True)
 
     # === 7. Обогащение метаданных из каталога для всех товаров ===
@@ -157,14 +159,17 @@ def fetch_store_data(
     return result
 
 
-def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
+def fetch_warehouse_data(token: str, nm_ids: list = None, _raw_df=None) -> list[dict]:
     """
     Загружает детализацию остатков по складам из WB API.
+
+    Args:
+        _raw_df: предзагруженные сырые данные (для устранения дублирования запросов)
 
     Returns:
         Список словарей {nm_id, warehouse_name, quantity}
     """
-    df = get_stocks_detailed(nm_ids=nm_ids, token=token)
+    df = get_stocks_detailed(nm_ids=nm_ids, token=token, _raw_df=_raw_df)
     if df.empty:
         return []
     return [

@@ -173,7 +173,11 @@ def get_catalog(token: str = None) -> dict:
 
     while True:
         body = {
-            "sort": {"cursor": cursor, "filter": {"withPhoto": -1}},
+            "settings": {
+                "cursor": cursor,
+                "filter": {"withPhoto": -1},
+                "sort": {"ascending": False},
+            },
         }
         data = post_with_retry(API_CONTENT_CARDS, token, body, retries=2)
 
@@ -229,24 +233,15 @@ def get_seller_info(token: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def get_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
+def _fetch_raw_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
     """
-    Получает остатки со складов, группирует по nmId.
+    Загружает сырые данные остатков из API (один HTTP-запрос).
 
-    Args:
-        nm_ids: список nmId для фильтрации (если None — все)
-        token: токен WB API (если None — из переменной окружения)
-
-    Returns:
-        DataFrame с колонками:
-        - nmId: ID товара
-        - stock_qty: суммарный остаток на всех складах
-        - in_way_from_client: товары в возврате
-        - stock_qty_clean: чистый остаток
+    Используется как общий источник для get_stocks() и get_stocks_detailed().
     """
     if token is None:
         token = get_token()
-    date_from = '2020-01-01'  # берём все остатки
+    date_from = '2020-01-01'
 
     url = f"{API_STOCKS}?dateFrom={date_from}"
     data = fetch_with_retry(url, token)
@@ -256,18 +251,39 @@ def get_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
 
-    # Фильтруем по nm_ids если передан список
     if nm_ids is not None:
         df = df[df['nmId'].isin(nm_ids)]
 
-    # Добавляем поле inWayFromClient (товары в возврате/отказе, в пути на склад)
     if 'inWayFromClient' not in df.columns:
         df['inWayFromClient'] = 0
 
-    # Метаданные товара (берём из первой записи склада)
-    for col in ['supplierArticle', 'subject', 'category']:
+    for col in ['supplierArticle', 'subject', 'category', 'warehouseName']:
         if col not in df.columns:
             df[col] = ''
+
+    return df
+
+
+def get_stocks(nm_ids: list = None, token: str = None, _raw_df: pd.DataFrame = None) -> pd.DataFrame:
+    """
+    Получает остатки со складов, группирует по nmId.
+
+    Args:
+        nm_ids: список nmId для фильтрации (если None — все)
+        token: токен WB API (если None — из переменной окружения)
+        _raw_df: предзагруженные сырые данные (для устранения дублирования запросов)
+
+    Returns:
+        DataFrame с колонками:
+        - nmId: ID товара
+        - stock_qty: суммарный остаток на всех складах
+        - in_way_from_client: товары в возврате
+        - stock_qty_clean: чистый остаток
+    """
+    df = _raw_df if _raw_df is not None else _fetch_raw_stocks(nm_ids, token)
+
+    if df.empty:
+        return pd.DataFrame()
 
     # Группируем по nmId, суммируем остатки и возвраты в пути
     grouped = df.groupby('nmId').agg({
@@ -287,13 +303,14 @@ def get_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
     return grouped
 
 
-def get_stocks_detailed(nm_ids: list = None, token: str = None) -> pd.DataFrame:
+def get_stocks_detailed(nm_ids: list = None, token: str = None, _raw_df: pd.DataFrame = None) -> pd.DataFrame:
     """
     Получает остатки по складам БЕЗ группировки — сохраняет детализацию по каждому складу.
 
     Args:
         nm_ids: список nmId для фильтрации (если None — все)
         token: токен WB API (если None — из переменной окружения)
+        _raw_df: предзагруженные сырые данные (для устранения дублирования запросов)
 
     Returns:
         DataFrame с колонками:
@@ -302,23 +319,10 @@ def get_stocks_detailed(nm_ids: list = None, token: str = None) -> pd.DataFrame:
         - quantity: остаток на складе
         - inWayFromClient: товары в возврате
     """
-    if token is None:
-        token = get_token()
-    date_from = '2020-01-01'
+    df = _raw_df if _raw_df is not None else _fetch_raw_stocks(nm_ids, token)
 
-    url = f"{API_STOCKS}?dateFrom={date_from}"
-    data = fetch_with_retry(url, token)
-
-    if not data:
+    if df.empty:
         return pd.DataFrame(columns=['nmId', 'warehouseName', 'quantity', 'inWayFromClient'])
-
-    df = pd.DataFrame(data)
-
-    if nm_ids is not None:
-        df = df[df['nmId'].isin(nm_ids)]
-
-    if 'inWayFromClient' not in df.columns:
-        df['inWayFromClient'] = 0
 
     # Сохраняем только нужные колонки, не группируем
     cols = ['nmId', 'warehouseName', 'quantity', 'inWayFromClient', 'supplierArticle']

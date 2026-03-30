@@ -143,8 +143,9 @@ class TestFetchStoreDataRecovery:
     @patch('bot.services.data_service.get_prices')
     @patch('bot.services.data_service.get_orders_multi')
     @patch('bot.services.data_service.get_stocks')
+    @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
     def test_product_only_in_catalog_recovered(
-        self, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
     ):
         """nm_id=500 есть только в каталоге → появляется в результате с метаданными."""
         mock_catalog.return_value = {
@@ -186,8 +187,9 @@ class TestFetchStoreDataRecovery:
     @patch('bot.services.data_service.get_prices')
     @patch('bot.services.data_service.get_orders_multi')
     @patch('bot.services.data_service.get_stocks')
+    @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
     def test_catalog_fallback_on_error(
-        self, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
     ):
         """При ошибке Content API пайплайн работает через prices_map."""
         mock_catalog.side_effect = Exception("Content API timeout")
@@ -216,8 +218,9 @@ class TestFetchStoreDataRecovery:
     @patch('bot.services.data_service.get_prices')
     @patch('bot.services.data_service.get_orders_multi')
     @patch('bot.services.data_service.get_stocks')
+    @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
     def test_metadata_enrichment_from_catalog(
-        self, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
     ):
         """Товар в stocks без метаданных — обогащается из каталога."""
         mock_catalog.return_value = {
