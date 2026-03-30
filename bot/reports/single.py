@@ -8,7 +8,7 @@ import logging
 import pandas as pd
 from openpyxl.comments import Comment
 
-from bot.config import THRESHOLD_A, THRESHOLD_B
+from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
 from bot.services.calculations import merge_wh_by_name
 from bot.reports.excel_styles import (
     HYPERLINK_FONT, LEFT,
@@ -104,6 +104,7 @@ def generate_report_from_data(
     days_threshold: int = 7,
     threshold_a: float = THRESHOLD_A,
     threshold_b: float = THRESHOLD_B,
+    threshold_c: float = THRESHOLD_C,
     warehouse_rows: list[dict] = None,
 ) -> str:
     """
@@ -246,20 +247,20 @@ def generate_report_from_data(
 
         # ── Аннотации под таблицами ──────────────────────────────────────
         ws1_last = len(report_export) + 4
-        ws1.cell(row=ws1_last, column=1, value='— Группы товаров —')
-        ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день)')
-        ws1.cell(row=ws1_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день)')
-        ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день)')
-        ws1.cell(row=ws1_last + 4, column=1, value='D: не продаются (0 шт/день)')
+        ws1.cell(row=ws1_last, column=1, value='— Группы товаров (продаж/день) —')
+        ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a})')
+        ws1.cell(row=ws1_last + 2, column=1, value=f'B: средние (≥{threshold_b})')
+        ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (≥{threshold_c})')
+        ws1.cell(row=ws1_last + 4, column=1, value=f'D: почти не продаются (<{threshold_c})')
         ws1.cell(row=ws1_last + 5, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
         apply_legend_style(ws1, ws1_last, has_threshold_row=True)
 
         ws2_last = last_row + 4
-        ws2.cell(row=ws2_last, column=1, value='— Группы товаров —')
-        ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a} шт/день)')
-        ws2.cell(row=ws2_last + 2, column=1, value=f'B: средние (≥{threshold_b} шт/день)')
-        ws2.cell(row=ws2_last + 3, column=1, value=f'C: редкие (<{threshold_b} шт/день)')
-        ws2.cell(row=ws2_last + 4, column=1, value='D: не продаются (0 шт/день)')
+        ws2.cell(row=ws2_last, column=1, value='— Группы товаров (продаж/день) —')
+        ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a})')
+        ws2.cell(row=ws2_last + 2, column=1, value=f'B: средние (≥{threshold_b})')
+        ws2.cell(row=ws2_last + 3, column=1, value=f'C: редкие (≥{threshold_c})')
+        ws2.cell(row=ws2_last + 4, column=1, value=f'D: почти не продаются (<{threshold_c})')
         apply_legend_style(ws2, ws2_last, has_threshold_row=False)
 
     logger.info(f"✓ Отчёт сохранён: {output_path}")

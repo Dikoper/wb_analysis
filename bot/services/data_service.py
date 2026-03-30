@@ -17,7 +17,7 @@ from bot.services.calculations import (
     assign_group, calc_days_remaining, get_price_increase,
     merge_orders_stocks,
 )
-from bot.config import THRESHOLD_A, THRESHOLD_B, DATA_CACHE_TTL
+from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C, DATA_CACHE_TTL
 from bot.db import (
     is_data_fresh, get_latest_product_data, save_product_data,
     is_warehouse_data_fresh, get_latest_warehouse_data, save_warehouse_data,
@@ -33,6 +33,7 @@ def fetch_store_data(
     days_threshold: int = 7,
     threshold_a: float = THRESHOLD_A,
     threshold_b: float = THRESHOLD_B,
+    threshold_c: float = THRESHOLD_C,
 ) -> list[dict]:
     """
     Загружает данные из WB API, рассчитывает метрики.
@@ -143,7 +144,7 @@ def fetch_store_data(
         df['avg_per_day'] = df['orders_count_14d'] / 14
     else:
         df['avg_per_day'] = df['avg_per_day'].fillna(df['orders_count_14d'] / 14)
-    df['group'] = df['avg_per_day'].apply(lambda x: assign_group(x, threshold_a, threshold_b))
+    df['group'] = df['avg_per_day'].apply(lambda x: assign_group(x, threshold_a, threshold_b, threshold_c))
 
     # === 6. Расчёт days_remaining ===
     df['days_remaining'] = df.apply(calc_days_remaining, axis=1)

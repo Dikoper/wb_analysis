@@ -130,6 +130,7 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
         days_threshold = int(await get_setting('calc_days_threshold', '7'))
         threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
+        threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
 
         data1, data2 = await asyncio.wait_for(
             asyncio.gather(
@@ -151,6 +152,7 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
             store1_name=name1, store2_name=name2,
             days_threshold=days_threshold,
             threshold_a=threshold_a, threshold_b=threshold_b,
+            threshold_c=threshold_c,
         )
 
         if report_path is None:
@@ -229,6 +231,7 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
         days_threshold = int(await get_setting('calc_days_threshold', '7'))
         threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
+        threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
 
         # Параллельная загрузка данных всех магазинов
         product_tasks = []
@@ -269,6 +272,7 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
             days_threshold=days_threshold,
             threshold_a=threshold_a,
             threshold_b=threshold_b,
+            threshold_c=threshold_c,
         )
 
         if report_path is None:

@@ -4,23 +4,23 @@
 
 import pandas as pd
 
-from bot.config import THRESHOLD_A, THRESHOLD_B
+from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
 
 
-def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold_b: float = THRESHOLD_B) -> str:
+def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold_b: float = THRESHOLD_B, threshold_c: float = THRESHOLD_C) -> str:
     """
     Определяет группу товара по средним продажам в день (рассчитанным за 14д).
 
     A: ≥threshold_a шт/день (ходовые)
     B: ≥threshold_b шт/день (средние)
-    C: <threshold_b шт/день (редкие)
-    D: 0 шт/день (не продаются)
+    C: ≥threshold_c шт/день (редкие)
+    D: <threshold_c шт/день (почти не продаются, реже 1 шт/неделю)
     """
     if avg_per_day >= threshold_a:
         return 'A'
     elif avg_per_day >= threshold_b:
         return 'B'
-    elif avg_per_day > 0:
+    elif avg_per_day >= threshold_c:
         return 'C'
     else:
         return 'D'

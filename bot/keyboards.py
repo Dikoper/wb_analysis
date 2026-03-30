@@ -143,7 +143,7 @@ def settings_kb(current_time: str = "09:00", is_subscribed: bool = False) -> Inl
     ])
 
 
-def calc_params_kb(days_n: int = 7, threshold_a: float = 4.0, threshold_b: float = 0.5) -> InlineKeyboardMarkup:
+def calc_params_kb(days_n: int = 7, threshold_a: float = 4.0, threshold_b: float = 0.5, threshold_c: float = 0.2) -> InlineKeyboardMarkup:
     """Подменю параметров расчёта."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -151,7 +151,7 @@ def calc_params_kb(days_n: int = 7, threshold_a: float = 4.0, threshold_b: float
             callback_data=SettingsCB(action="days_threshold").pack()
         )],
         [InlineKeyboardButton(
-            text=f"📦 Группы: A≥{threshold_a} · B≥{threshold_b}",
+            text=f"📦 A≥{threshold_a} · B≥{threshold_b} · D<{threshold_c}",
             callback_data=SettingsCB(action="group_thresholds").pack()
         )],
         [InlineKeyboardButton(

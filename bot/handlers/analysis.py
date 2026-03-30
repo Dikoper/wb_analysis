@@ -121,6 +121,7 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         days_threshold = int(await get_setting('calc_days_threshold', '7'))
         threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
         threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
+        threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
 
         # 1. Загрузка данных из API (или из кэша если свежие)
         store_id = callback_data.store_id
@@ -140,7 +141,7 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         report_path = await asyncio.to_thread(
             generate_report_from_data, product_rows=product_rows, store_name=name,
             days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
-            warehouse_rows=warehouse_rows,
+            threshold_c=threshold_c, warehouse_rows=warehouse_rows,
         )
         await save_report_history(store_id, report_path)
 

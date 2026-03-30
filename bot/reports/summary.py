@@ -7,7 +7,7 @@ import logging
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-from bot.config import THRESHOLD_A, THRESHOLD_B
+from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
 from bot.services.calculations import aggregate_by_article, merge_wh_by_name
 from bot.reports.excel_styles import (
     DATA_FONT, DATA_FONT_BOLD, CENTER, LEFT, WRAP_LEFT,
@@ -28,6 +28,7 @@ def generate_summary_report(
     days_threshold: int = 7,
     threshold_a: float = THRESHOLD_A,
     threshold_b: float = THRESHOLD_B,
+    threshold_c: float = THRESHOLD_C,
 ) -> str | None:
     """
     Генерирует сводный Excel-отчёт по всем магазинам.
@@ -198,11 +199,11 @@ def generate_summary_report(
     # Легенда
     legend_row = summary_row + 3
     write_legend_block(ws, legend_row, [
-        ("— Группы товаров —", "title"),
-        (f"A: ходовые (≥{threshold_a} шт/день) → среднее по 7 дням", "item"),
-        (f"B: средние (≥{threshold_b} шт/день) → среднее по 14 дням", "item"),
-        (f"C: редкие (<{threshold_b} шт/день) → среднее по 30 дням", "item"),
-        ("D: не продаются (0 шт/день)", "item"),
+        ("— Группы товаров (продаж/день) —", "title"),
+        (f"A: ходовые (≥{threshold_a})", "item"),
+        (f"B: средние (≥{threshold_b})", "item"),
+        (f"C: редкие (≥{threshold_c})", "item"),
+        (f"D: почти не продаются (<{threshold_c})", "item"),
         ("", "item"),
         ("— Остатки по складам —", "title"),
         ("Наведите мышь на ячейку для детализации по складам", "item"),
