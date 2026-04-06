@@ -228,8 +228,8 @@ def generate_report_from_data(
 
         # --- Лист 1: На исходе ---
         # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
-        apply_header_style(ws1, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 36})
-        apply_data_style(ws1, float_cols=[7, 8, 9], int_cols=[5])
+        apply_header_style(ws1, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 64})
+        apply_data_style(ws1, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
         apply_hyperlinks(ws1, link_col=3)
         apply_group_colors(ws1, group_col=4)
 
@@ -243,10 +243,8 @@ def generate_report_from_data(
         _apply_stock_comments(ws1, report, stock_col=5, wh_index=wh_index)
         _apply_price_comments(ws1, report, price_col=9)
 
-        # Стилизация колонки складов (col 10) + авторазмер строк
+        # Стилизация колонки складов (col 10)
         _style_wh_column(ws1, wh_col=10, num_rows=len(report_export))
-        for row_num in range(2, len(report_export) + 2):
-            ws1.row_dimensions[row_num].height = None
 
         # --- Лист 2: Нет на складе ---
         # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Продаж/день, 6=Цена
@@ -257,8 +255,8 @@ def generate_report_from_data(
 
         # --- Лист 3: Все товары ---
         # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
-        apply_header_style(ws3, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 36})
-        apply_data_style(ws3, float_cols=[7, 8, 9], int_cols=[5])
+        apply_header_style(ws3, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 64})
+        apply_data_style(ws3, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
         apply_hyperlinks(ws3, link_col=3)
         apply_group_colors(ws3, group_col=4)
 
@@ -274,10 +272,8 @@ def generate_report_from_data(
         # Ссылки на карточку товара по артикулу (col 1 → nmId из col 3)
         _apply_product_links(ws3, article_col=1, nm_id_col=3)
 
-        # Стилизация колонки складов (col 10) + авторазмер строк
+        # Стилизация колонки складов (col 10)
         _style_wh_column(ws3, wh_col=10, num_rows=len(all_export))
-        for row_num in range(2, len(all_export) + 2):
-            ws3.row_dimensions[row_num].height = None
 
         # ── Аннотации под таблицами ──────────────────────────────────────
         ws1_last = len(report_export) + 4

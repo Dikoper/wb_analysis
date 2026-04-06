@@ -43,9 +43,11 @@ def fetch_store_data(
     logger.info("=== Загрузка данных из WB API ===")
 
     # === 1. Каталог — полный список товаров через Content API ===
+    catalog_ok = False
     try:
         logger.info("Загрузка каталога (Content API)...")
         catalog = get_catalog(token=token)
+        catalog_ok = True
         logger.info(f"✓ Каталог: {len(catalog)} карточек")
     except Exception as e:
         logger.warning(f"Content API недоступен: {e}. Fallback на prices_map.")
@@ -114,16 +116,25 @@ def fetch_store_data(
     # === 7a. Обогащение баркодов из каталога ===
     if 'barcode' not in df.columns:
         df['barcode'] = ''
-    mask = df['barcode'].isna() | (df['barcode'] == '')
-    if mask.any():
+    # Нормализуем: NaN → '' для корректной работы масок
+    df['barcode'] = df['barcode'].fillna('')
+    mask = df['barcode'] == ''
+    if mask.any() and catalog_ok:
         df.loc[mask, 'barcode'] = df.loc[mask, 'nmId'].map(
             lambda nm: catalog.get(nm, {}).get('barcode', ''))
+        df['barcode'] = df['barcode'].fillna('')
+        filled = (df['barcode'] != '').sum()
+        logger.info(f"Баркоды из каталога: {filled}/{len(df)}")
 
     # === 7b. Fallback баркодов из Prices API ===
-    mask = df['barcode'].isna() | (df['barcode'] == '')
-    if mask.any():
+    mask = df['barcode'] == ''
+    if mask.any() and prices_barcodes:
         df.loc[mask, 'barcode'] = df.loc[mask, 'nmId'].map(
             lambda nm: prices_barcodes.get(nm, ''))
+        df['barcode'] = df['barcode'].fillna('')
+        still_empty = (df['barcode'] == '').sum()
+        if still_empty:
+            logger.warning(f"Баркоды: {still_empty} товаров без баркода после всех fallback")
 
     # === 7c. Fallback артикулов из Prices API (для товаров не в каталоге) ===
     mask = df['supplierArticle'].isna() | (df['supplierArticle'] == '')
@@ -172,7 +183,7 @@ def fetch_store_data(
             'days_remaining': round(row['days_remaining'], 2) if row['days_remaining'] is not None else None,
             'price_increase_pct': int(row['price_increase_pct']),
             'price': float(row['price']) if pd.notna(row.get('price')) else None,
-            'barcode': row.get('barcode') or '',
+            'barcode': row.get('barcode') if pd.notna(row.get('barcode')) else '',
         })
 
     return result
@@ -207,7 +218,11 @@ async def fetch_or_cache_product(store_id, token, days_threshold, threshold_a, t
     """Загружает данные товаров из кэша или API."""
     if not force_refresh and await is_data_fresh(store_id, DATA_CACHE_TTL):
         rows, _ = await get_latest_product_data(store_id)
-        return rows
+        # Проверяем что кэш содержит баркоды, иначе перезагружаем
+        has_barcodes = any(r.get('barcode') for r in rows) if rows else False
+        if rows and has_barcodes:
+            return rows
+        logger.info("Кэш без баркодов — принудительная перезагрузка")
     rows = await asyncio.to_thread(
         fetch_store_data, token=token,
         days_threshold=days_threshold,

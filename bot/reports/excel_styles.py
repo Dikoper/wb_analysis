@@ -99,7 +99,7 @@ def apply_header_style(ws, column_widths: dict, headers: list = None, row_height
         ws.column_dimensions[get_column_letter(col_num)].width = width
 
 
-def apply_data_style(ws, float_cols: list, int_cols: list):
+def apply_data_style(ws, float_cols: list, int_cols: list, row_height: int = 16):
     """Шрифт, выравнивание, высота строк, числовые форматы для строк с данными."""
     data_font = Font(name="Arial", size=10, color="1A1A2E")
     center = Alignment(horizontal="center", vertical="center")
@@ -111,7 +111,8 @@ def apply_data_style(ws, float_cols: list, int_cols: list):
         # пропускаем строки аннотаций (нет значения во 2-м столбце)
         if row[0].value is None:
             continue
-        ws.row_dimensions[row[0].row].height = 16
+        if row_height is not None:
+            ws.row_dimensions[row[0].row].height = row_height
         for cell in row:
             cell.font = data_font
             cell.border = border

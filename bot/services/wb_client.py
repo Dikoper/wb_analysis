@@ -89,6 +89,12 @@ def fetch_with_retry(url: str, token: str, retries: int = 3, delay: int = 5) -> 
                 logger.warning(f"Rate limit (429), ожидание {delay * 2} сек...")
                 time.sleep(delay * 2)
                 continue
+            if e.code in (500, 502, 503, 504):
+                logger.warning(f"Серверная ошибка (HTTP {e.code}), попытка {attempt}/{retries}")
+                if attempt < retries:
+                    time.sleep(delay)
+                    continue
+                raise WBApiError(f"Ошибка WB API: HTTP {e.code}") from e
             raise WBApiError(f"Ошибка WB API: HTTP {e.code}") from e
 
         except (IncompleteRead, URLError, TimeoutError) as e:
@@ -151,6 +157,12 @@ def post_with_retry(url: str, token: str, body: dict, retries: int = 3, delay: i
                 logger.warning(f"Rate limit (429), ожидание {delay * 2} сек...")
                 time.sleep(delay * 2)
                 continue
+            if e.code in (500, 502, 503, 504):
+                logger.warning(f"Серверная ошибка (HTTP {e.code}), POST попытка {attempt}/{retries}")
+                if attempt < retries:
+                    time.sleep(delay)
+                    continue
+                raise WBApiError(f"Ошибка WB API: HTTP {e.code}") from e
             raise WBApiError(f"Ошибка WB API: HTTP {e.code}") from e
 
         except (IncompleteRead, URLError, TimeoutError) as e:
