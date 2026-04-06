@@ -16,12 +16,11 @@ import os
 logger = logging.getLogger(__name__)
 
 # API endpoints
-API_ORDERS = 'https://statistics-api.wildberries.ru/api/v1/supplier/orders'  # deprecated, удаление 23.06.2025
-API_STOCKS = 'https://statistics-api.wildberries.ru/api/v1/supplier/stocks'  # deprecated, удаление 23.06.2025
 API_SELLER_INFO = 'https://common-api.wildberries.ru/api/v1/seller-info'
 API_PRICES = 'https://discounts-prices-api.wildberries.ru/api/v2/list/goods/filter'
 API_CONTENT_CARDS = 'https://content-api.wildberries.ru/content/v2/get/cards/list'
 API_STOCKS_REPORT = 'https://seller-analytics-api.wildberries.ru/api/v2/stocks-report/products/products'
+API_WB_WAREHOUSES = 'https://seller-analytics-api.wildberries.ru/api/analytics/v1/stocks-report/wb-warehouses'
 
 
 class WBTokenError(Exception):
@@ -76,10 +75,15 @@ def fetch_with_retry(url: str, token: str, retries: int = 3, delay: int = 5) -> 
             return data if data else []
 
         except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
+            if e.code == 401:
                 raise WBTokenError(
                     f"Токен невалиден или истёк (HTTP {e.code}). "
                     "Обновите токен в настройках бота."
+                )
+            if e.code == 403:
+                raise WBTokenError(
+                    f"Нет доступа (HTTP 403). Проверьте, что токен имеет "
+                    "нужную категорию доступа и не истёк."
                 )
             if e.code == 429:
                 logger.warning(f"Rate limit (429), ожидание {delay * 2} сек...")
@@ -133,10 +137,15 @@ def post_with_retry(url: str, token: str, body: dict, retries: int = 3, delay: i
             return data if data else {}
 
         except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
+            if e.code == 401:
                 raise WBTokenError(
                     f"Токен невалиден или истёк (HTTP {e.code}). "
                     "Обновите токен в настройках бота."
+                )
+            if e.code == 403:
+                raise WBTokenError(
+                    f"Нет доступа (HTTP 403). Проверьте, что токен имеет "
+                    "категорию «Аналитика» и не истёк."
                 )
             if e.code == 429:
                 logger.warning(f"Rate limit (429), ожидание {delay * 2} сек...")
@@ -239,106 +248,6 @@ def get_seller_info(token: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _fetch_raw_stocks(nm_ids: list = None, token: str = None) -> pd.DataFrame:
-    """
-    Загружает сырые данные остатков из API (один HTTP-запрос).
-
-    Используется как общий источник для get_stocks() и get_stocks_detailed().
-    """
-    if token is None:
-        token = get_token()
-    date_from = '2020-01-01'
-
-    url = f"{API_STOCKS}?dateFrom={date_from}"
-    data = fetch_with_retry(url, token)
-
-    if not data:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-
-    if nm_ids is not None:
-        df = df[df['nmId'].isin(nm_ids)]
-
-    if 'inWayFromClient' not in df.columns:
-        df['inWayFromClient'] = 0
-
-    for col in ['supplierArticle', 'subject', 'category', 'warehouseName']:
-        if col not in df.columns:
-            df[col] = ''
-
-    return df
-
-
-def get_stocks(nm_ids: list = None, token: str = None, _raw_df: pd.DataFrame = None) -> pd.DataFrame:
-    """
-    Получает остатки со складов, группирует по nmId.
-
-    Args:
-        nm_ids: список nmId для фильтрации (если None — все)
-        token: токен WB API (если None — из переменной окружения)
-        _raw_df: предзагруженные сырые данные (для устранения дублирования запросов)
-
-    Returns:
-        DataFrame с колонками:
-        - nmId: ID товара
-        - stock_qty: суммарный остаток на всех складах
-        - in_way_from_client: товары в возврате
-        - stock_qty_clean: чистый остаток
-    """
-    df = _raw_df if _raw_df is not None else _fetch_raw_stocks(nm_ids, token)
-
-    if df.empty:
-        return pd.DataFrame()
-
-    # Группируем по nmId, суммируем остатки и возвраты в пути
-    grouped = df.groupby('nmId').agg({
-        'quantity': 'sum',
-        'inWayFromClient': 'sum',
-        'supplierArticle': 'first',
-        'subject': 'first',
-        'category': 'first',
-    }).rename(columns={
-        'quantity': 'stock_qty',
-        'inWayFromClient': 'in_way_from_client'
-    }).reset_index()
-
-    # Чистый остаток = остаток на складе минус товары в возврате
-    grouped['stock_qty_clean'] = (grouped['stock_qty'] - grouped['in_way_from_client']).clip(lower=0)
-
-    return grouped
-
-
-def get_stocks_detailed(nm_ids: list = None, token: str = None, _raw_df: pd.DataFrame = None) -> pd.DataFrame:
-    """
-    Получает остатки по складам БЕЗ группировки — сохраняет детализацию по каждому складу.
-
-    Args:
-        nm_ids: список nmId для фильтрации (если None — все)
-        token: токен WB API (если None — из переменной окружения)
-        _raw_df: предзагруженные сырые данные (для устранения дублирования запросов)
-
-    Returns:
-        DataFrame с колонками:
-        - nmId: ID товара
-        - warehouseName: название склада
-        - quantity: остаток на складе
-        - inWayFromClient: товары в возврате
-    """
-    df = _raw_df if _raw_df is not None else _fetch_raw_stocks(nm_ids, token)
-
-    if df.empty:
-        return pd.DataFrame(columns=['nmId', 'warehouseName', 'quantity', 'inWayFromClient'])
-
-    # Сохраняем только нужные колонки, не группируем
-    cols = ['nmId', 'warehouseName', 'quantity', 'inWayFromClient', 'supplierArticle']
-    for c in cols:
-        if c not in df.columns:
-            df[c] = '' if c in ('warehouseName', 'supplierArticle') else 0
-
-    return df[cols].reset_index(drop=True)
-
-
 def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict, dict]:
     """
     Получает цены товаров (после скидки) через Prices API.
@@ -401,117 +310,23 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict, dict
     return prices, articles, barcodes
 
 
-def get_orders(days: int = 7, token: str = None) -> pd.DataFrame:
-    """
-    Получает заказы за N дней и группирует по nmId.
-
-    Args:
-        days: количество дней (по умолчанию 7)
-        token: токен WB API (если None — из переменной окружения)
-
-    Returns:
-        DataFrame с колонками:
-        - nmId: ID товара
-        - supplierArticle: артикул продавца
-        - subject: название товара
-        - category: категория
-        - orders_count_{days}d: количество заказов
-    """
-    if token is None:
-        token = get_token()
-    date_from = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-
-    # Запрос к API с retry
-    url = f"{API_ORDERS}?dateFrom={date_from}"
-    data = fetch_with_retry(url, token)
-
-    if not data:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-
-    # Исключаем отменённые заказы (isCancel=True)
-    if 'isCancel' in df.columns:
-        df = df[df['isCancel'] != True]
-
-    # Группируем по nmId
-    col_name = f'orders_count_{days}d'
-    grouped = df.groupby('nmId').agg({
-        'supplierArticle': 'first',
-        'subject': 'first',
-        'category': 'first',
-        'nmId': 'count'
-    }).rename(columns={'nmId': col_name}).reset_index()
-
-    return grouped
-
-
-def get_orders_multi(token: str = None) -> pd.DataFrame:
-    """
-    Оптимизированная загрузка: 1 запрос за 14 дней, из него вычисляются 7д и 14д.
-    Заменяет 3 отдельных вызова get_orders(30/14/7).
-
-    Returns:
-        DataFrame с колонками: nmId, supplierArticle, subject, category,
-        orders_count_7d, orders_count_14d
-    """
-    if token is None:
-        token = get_token()
-
-    # Один запрос за 14 дней — покрывает и 7д как подмножество
-    date_from_14 = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
-    date_from_7 = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-
-    url = f"{API_ORDERS}?dateFrom={date_from_14}"
-    data = fetch_with_retry(url, token)
-
-    if not data:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-
-    # Исключаем отменённые заказы
-    if 'isCancel' in df.columns:
-        df = df[df['isCancel'] != True]
-
-    # Все 14д — группируем по nmId
-    grouped_14 = df.groupby('nmId').agg({
-        'supplierArticle': 'first',
-        'subject': 'first',
-        'category': 'first',
-        'nmId': 'count'
-    }).rename(columns={'nmId': 'orders_count_14d'}).reset_index()
-
-    # 7д — фильтруем по дате из тех же данных, без повторного запроса
-    df_7 = df[df['date'] >= date_from_7]
-    grouped_7 = df_7.groupby('nmId').agg({
-        'nmId': 'count'
-    }).rename(columns={'nmId': 'orders_count_7d'}).reset_index()
-
-    # Объединяем 14д и 7д в один DataFrame
-    result = grouped_14.merge(grouped_7, on='nmId', how='left')
-    result['orders_count_7d'] = result['orders_count_7d'].fillna(0).astype(int)
-
-    return result
-
-
 def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Загружает данные через Seller Analytics Stocks Report (замена legacy stocks + orders).
+    Загружает данные через Seller Analytics Stocks Report.
 
     Один POST-запрос возвращает остатки и заказы по всем товарам.
-    Формат возврата совместим с get_stocks() и get_orders_multi().
 
     Args:
         token: токен WB API
         period_days: период для данных по заказам (по умолчанию 14)
 
     Returns:
-        (stocks_df, orders_df) — два DataFrame в том же формате,
-        что возвращают get_stocks() и get_orders_multi()
+        (stocks_df, orders_df) — два DataFrame:
+        stocks_df: nmId, stock_qty, in_way_from_client, stock_qty_clean, supplierArticle, subject, category
+        orders_df: nmId, supplierArticle, subject, category, orders_count_14d, orders_count_7d, avg_per_day
 
     Raises:
-        WBApiError: при ошибках API (включая 402 — платная подписка)
+        WBApiError: при ошибках API
         WBTokenError: при невалидном токене
     """
     if token is None:
@@ -560,7 +375,7 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
         logger.warning("Stocks Report вернул 0 товаров")
         return pd.DataFrame(), pd.DataFrame()
 
-    # Маппинг в формат, совместимый с get_stocks() и get_orders_multi()
+    # Маппинг в формат stocks_df + orders_df
     stocks_rows = []
     orders_rows = []
 
@@ -598,3 +413,71 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
 
     logger.info(f"Stocks Report: {len(stocks_df)} товаров загружено")
     return stocks_df, orders_df
+
+
+def get_warehouse_stocks(token: str = None, nm_ids: list = None) -> pd.DataFrame:
+    """
+    Загружает остатки по складам через современный wb-warehouses API.
+
+    Замена deprecated GET /api/v1/supplier/stocks.
+    Возвращает построчную детализацию: по одной строке на каждый склад+товар.
+
+    Формат ответа API: {"data": {"items": [{nmId, warehouseName, quantity, inWayFromClient, ...}]}}
+
+    Args:
+        token: токен WB API (категория Analytics)
+        nm_ids: список nmId для фильтрации (если None — все товары)
+
+    Returns:
+        DataFrame с колонками: nmId, warehouseName, quantity, inWayToClient, inWayFromClient
+    """
+    if token is None:
+        token = get_token()
+
+    all_rows = []
+    offset = 0
+    page_limit = 1000
+
+    while True:
+        body = {
+            "nmIds": nm_ids or [],
+            "limit": page_limit,
+            "offset": offset,
+        }
+
+        logger.info(f"WB Warehouses: offset={offset}, limit={page_limit}")
+        data = post_with_retry(API_WB_WAREHOUSES, token, body)
+
+        # Ответ: {"data": {"items": [...]}}
+        items = []
+        if isinstance(data, dict):
+            inner = data.get("data", {})
+            if isinstance(inner, dict):
+                items = inner.get("items", [])
+            elif isinstance(inner, list):
+                items = inner
+        elif isinstance(data, list):
+            items = data
+
+        all_rows.extend(items)
+        logger.info(f"WB Warehouses: получено {len(items)} строк (всего {len(all_rows)})")
+
+        if len(items) < page_limit:
+            break
+
+        offset += page_limit
+        time.sleep(21)  # rate limit: 1 req / 20 sec
+
+    if not all_rows:
+        logger.warning("WB Warehouses вернул 0 строк")
+        return pd.DataFrame(columns=['nmId', 'warehouseName', 'quantity', 'inWayToClient', 'inWayFromClient'])
+
+    df = pd.DataFrame(all_rows)
+
+    # Проверяем наличие колонок с безопасным fallback
+    for col in ['nmId', 'warehouseName', 'quantity', 'inWayToClient', 'inWayFromClient']:
+        if col not in df.columns:
+            df[col] = 0 if col != 'warehouseName' else ''
+
+    logger.info(f"WB Warehouses: {len(df)} строк загружено")
+    return df[['nmId', 'warehouseName', 'quantity', 'inWayToClient', 'inWayFromClient']]

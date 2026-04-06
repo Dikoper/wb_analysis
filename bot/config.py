@@ -41,3 +41,6 @@ THRESHOLD_C = 0.2   # C: ≥0.2 (редкие), D: <0.2 (почти не про�
 
 # Кэш данных API (минуты) — если данные свежее, повторный запрос к API не делается
 DATA_CACHE_TTL = int(os.getenv('DATA_CACHE_TTL', '30'))
+
+# Принудительная перезагрузка данных (игнорирует кеш). Для тестов после миграции.
+FORCE_REFRESH = os.getenv('FORCE_REFRESH', 'false').lower() in ('true', '1', 'yes')

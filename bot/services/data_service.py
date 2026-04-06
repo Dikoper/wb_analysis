@@ -10,14 +10,13 @@ import logging
 import pandas as pd
 
 from bot.services.wb_client import (
-    get_orders_multi, get_stocks, get_stocks_detailed, get_prices, get_catalog,
-    _fetch_raw_stocks, get_stocks_report,
+    get_prices, get_catalog, get_stocks_report, get_warehouse_stocks,
 )
 from bot.services.calculations import (
     assign_group, calc_days_remaining, get_price_increase,
     merge_orders_stocks,
 )
-from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C, DATA_CACHE_TTL
+from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C, DATA_CACHE_TTL, FORCE_REFRESH
 from bot.db import (
     is_data_fresh, get_latest_product_data, save_product_data,
     is_warehouse_data_fresh, get_latest_warehouse_data, save_warehouse_data,
@@ -67,30 +66,10 @@ def fetch_store_data(
     if catalog is None:
         catalog = {nm: {} for nm in prices_map}
 
-    # === 3-4. Остатки + Заказы ===
-    # Основной источник: Stocks Report API (замена deprecated Statistics API)
-    # Fallback: legacy Statistics Stocks + Orders (на случай недоступности)
-    try:
-        logger.info("Загрузка остатков и заказов (Stocks Report API)...")
-        stocks, orders = get_stocks_report(token=token)
-        logger.info(f"✓ Stocks Report: {len(stocks)} товаров")
-    except Exception as e:
-        logger.warning(f"Stocks Report недоступен: {e}. Fallback на legacy API.")
-        try:
-            logger.info("Загрузка остатков (legacy)...")
-            raw_stocks = _fetch_raw_stocks(nm_ids=None, token=token)
-            stocks = get_stocks(_raw_df=raw_stocks)
-            logger.info(f"✓ Остатки: {len(stocks)} товаров")
-        except Exception as e2:
-            logger.error(f"✗ Ошибка загрузки остатков: {e2}")
-            raise
-        try:
-            logger.info("Загрузка заказов за 14 дней (legacy)...")
-            orders = get_orders_multi(token=token)
-            logger.info(f"✓ Заказы: {len(orders)} товаров с заказами")
-        except Exception as e2:
-            logger.error(f"✗ Ошибка загрузки заказов: {e2}")
-            raise
+    # === 3-4. Остатки + Заказы (Stocks Report API) ===
+    logger.info("Загрузка остатков и заказов (Stocks Report API)...")
+    stocks, orders = get_stocks_report(token=token)
+    logger.info(f"✓ Stocks Report: {len(stocks)} товаров")
 
     # === 5. OUTER JOIN: stocks + orders ===
     df = merge_orders_stocks(orders, stocks)
@@ -199,17 +178,14 @@ def fetch_store_data(
     return result
 
 
-def fetch_warehouse_data(token: str, nm_ids: list = None, _raw_df=None) -> list[dict]:
+def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
     """
-    Загружает детализацию остатков по складам из WB API.
-
-    Args:
-        _raw_df: предзагруженные сырые данные (для устранения дублирования запросов)
+    Загружает детализацию остатков по складам из WB API (wb-warehouses).
 
     Returns:
-        Список словарей {nm_id, warehouse_name, quantity}
+        Список словарей {nm_id, warehouse_name, quantity, in_way_from_client}
     """
-    df = get_stocks_detailed(nm_ids=nm_ids, token=token, _raw_df=_raw_df)
+    df = get_warehouse_stocks(token=token, nm_ids=nm_ids)
     if df.empty:
         return []
     return [
@@ -218,7 +194,7 @@ def fetch_warehouse_data(token: str, nm_ids: list = None, _raw_df=None) -> list[
             'warehouse_name': row['warehouseName'],
             'quantity': int(row['quantity']),
             'in_way_from_client': int(row.get('inWayFromClient', 0)),
-            'supplier_article': row.get('supplierArticle') or None,
+            'supplier_article': '',
         }
         for _, row in df.iterrows()
     ]
@@ -226,9 +202,10 @@ def fetch_warehouse_data(token: str, nm_ids: list = None, _raw_df=None) -> list[
 
 # ── Кэширование ──────────────────────────────────────────────────────────────
 
-async def fetch_or_cache_product(store_id, token, days_threshold, threshold_a, threshold_b):
+async def fetch_or_cache_product(store_id, token, days_threshold, threshold_a, threshold_b,
+                                 force_refresh=FORCE_REFRESH):
     """Загружает данные товаров из кэша или API."""
-    if await is_data_fresh(store_id, DATA_CACHE_TTL):
+    if not force_refresh and await is_data_fresh(store_id, DATA_CACHE_TTL):
         rows, _ = await get_latest_product_data(store_id)
         return rows
     rows = await asyncio.to_thread(
@@ -241,9 +218,9 @@ async def fetch_or_cache_product(store_id, token, days_threshold, threshold_a, t
     return rows
 
 
-async def fetch_or_cache_warehouse(store_id, token):
+async def fetch_or_cache_warehouse(store_id, token, force_refresh=FORCE_REFRESH):
     """Загружает данные по складам из кэша или API."""
-    if await is_warehouse_data_fresh(store_id, DATA_CACHE_TTL):
+    if not force_refresh and await is_warehouse_data_fresh(store_id, DATA_CACHE_TTL):
         wh_data = await get_latest_warehouse_data(store_id)
         if wh_data:
             return wh_data
