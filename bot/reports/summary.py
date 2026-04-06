@@ -8,7 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
 from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
-from bot.services.calculations import aggregate_by_article, merge_wh_by_name
+from bot.services.calculations import aggregate_by_article, merge_wh_by_name, wh_compact_str
 from bot.reports.excel_styles import (
     DATA_FONT, DATA_FONT_BOLD, CENTER, LEFT, WRAP_LEFT,
     HYPERLINK_FONT, SUMMARY_PAIR_ALT_BG,
@@ -133,20 +133,20 @@ def generate_summary_report(
             )
 
             # Warehouse data для колонок D (перезапись) и I
-            wh_list = wh_index.get(store_name, {}).get(article, [])
-            wh_list = merge_wh_by_name(wh_list)
+            raw_wh_list = wh_index.get(store_name, {}).get(article, [])
+            wh_list = merge_wh_by_name(raw_wh_list)
             total_iwfc = sum(w.get('in_way_from_client', 0) for w in wh_list)
             wh_active = [w for w in wh_list if w['quantity'] > 0]
             wh_active.sort(key=lambda w: w['quantity'], reverse=True)
 
-            # D: Перезапись остатка в формат "qty (+возвр)"
+            # D: Перезапись остатка в формат "qty (-возвр)"
             if wh_active:
                 wh_total_qty = sum(w['quantity'] for w in wh_active)
-                display_stock = f"{wh_total_qty} (+{total_iwfc})" if total_iwfc > 0 else str(wh_total_qty)
+                display_stock = f"{wh_total_qty} (-{total_iwfc})" if total_iwfc > 0 else str(wh_total_qty)
             else:
                 stock_val = store_data.get('stock_qty', 0)
                 iwfc_total = store_data.get('in_way_from_client', 0)
-                display_stock = f"{stock_val} (+{iwfc_total})" if iwfc_total > 0 else str(stock_val)
+                display_stock = f"{stock_val} (-{iwfc_total})" if iwfc_total > 0 else str(stock_val)
             cell_d = ws.cell(row=row_num, column=4, value=display_stock)
             cell_d.font = DATA_FONT
             cell_d.alignment = CENTER
@@ -156,20 +156,7 @@ def generate_summary_report(
             add_stock_comment(cell_d, wh_list)
 
             # I: Остатки по складам — компактная строка
-            if wh_active:
-                compact_parts = [f"{w['warehouse_name']}: {w['quantity']}" for w in wh_active]
-                if total_iwfc > 0:
-                    compact_parts.append(f"+{total_iwfc} возвр.")
-                compact = " | ".join(compact_parts)
-            else:
-                stock_val = store_data.get('stock_qty', 0)
-                iwfc_total = store_data.get('in_way_from_client', 0)
-                parts = []
-                if stock_val > 0:
-                    parts.append(f"итого: {stock_val}")
-                if iwfc_total > 0:
-                    parts.append(f"+{iwfc_total} возвр.")
-                compact = " | ".join(parts) if parts else "—"
+            compact = wh_compact_str(raw_wh_list)
 
             c = ws.cell(row=row_num, column=9, value=compact)
             c.font = Font(name="Arial", size=9, color="555555")

@@ -65,6 +65,10 @@ async def _migrate_warehouse_supplier_article(db):
     await _migrate_add_column_safe(db, 'warehouse_stocks', 'supplier_article', 'TEXT')
 
 
+async def _migrate_product_barcode(db):
+    await _migrate_add_column_safe(db, 'product_data', 'barcode', 'TEXT')
+
+
 async def _migrate_cache_meta(db):
     """Таблица метаданных кеша: один timestamp на снимок вместо fetched_at в каждой строке."""
     await db.execute('''
@@ -105,6 +109,7 @@ MIGRATIONS = [
     (5, _migrate_warehouse_in_way),
     (6, _migrate_warehouse_supplier_article),
     (7, _migrate_cache_meta),
+    (8, _migrate_product_barcode),
 ]
 
 

@@ -20,15 +20,16 @@ async def save_product_data(store_id: int, rows: list[dict]):
                    (store_id, nm_id, supplier_article, subject, category,
                     product_group, stock_qty, in_way_from_client, stock_qty_clean,
                     orders_7d, orders_14d, orders_30d,  -- orders_30d: больше не запрашивается, всегда NULL
-                    avg_per_day, days_remaining, price_increase_pct, price)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    avg_per_day, days_remaining, price_increase_pct, price, barcode)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 (store_id, row['nm_id'], row.get('supplier_article'),
                  row.get('subject'), row.get('category'),
                  row.get('product_group'), row.get('stock_qty'),
                  row.get('in_way_from_client', 0), row.get('stock_qty_clean'),
                  row.get('orders_7d'), row.get('orders_14d'), row.get('orders_30d'),
                  row.get('avg_per_day'), row.get('days_remaining'),
-                 row.get('price_increase_pct'), row.get('price'))
+                 row.get('price_increase_pct'), row.get('price'),
+                 row.get('barcode'))
             )
         await db.execute(
             "INSERT OR REPLACE INTO cache_meta (store_id, data_type, fetched_at) "

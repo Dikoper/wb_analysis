@@ -122,6 +122,27 @@ def merge_wh_by_name(wh_list):
     return list(merged.values())
 
 
+def wh_compact_str(wh_list: list[dict]) -> str:
+    """
+    Компактная строка детализации по складам: 'Склад: кол-во | Склад2: кол-во | -N возвр.'.
+
+    Принимает сырой список складов (будет merged внутри).
+    Возвращает "—" если нет активных складов.
+    """
+    if not wh_list:
+        return "—"
+    wh_list = merge_wh_by_name(wh_list)
+    total_iwfc = sum(w.get('in_way_from_client', 0) for w in wh_list)
+    wh_active = [w for w in wh_list if w['quantity'] > 0]
+    wh_active.sort(key=lambda w: w['quantity'], reverse=True)
+    if not wh_active:
+        return "—"
+    parts = [f"{w['warehouse_name']}: {w['quantity']}" for w in wh_active]
+    if total_iwfc > 0:
+        parts.append(f"-{total_iwfc} возвр.")
+    return " | ".join(parts)
+
+
 # ── Трансформации данных (перенесено из wb_api.py) ────────────────────────────
 
 def calc_avg_per_day(df: pd.DataFrame, days: int = 7) -> pd.DataFrame:

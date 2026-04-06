@@ -55,12 +55,13 @@ def fetch_store_data(
     # === 2. Цены ===
     try:
         logger.info("Загрузка цен...")
-        prices_map, prices_articles = get_prices(nm_ids=None, token=token)
+        prices_map, prices_articles, prices_barcodes = get_prices(nm_ids=None, token=token)
         logger.info(f"✓ Цены: {len(prices_map)} товаров")
     except Exception as e:
         logger.warning(f"Не удалось загрузить цены: {e}")
         prices_map = {}
         prices_articles = {}
+        prices_barcodes = {}
 
     # Fallback: если каталог не загрузился, используем prices_map как источник ID
     if catalog is None:
@@ -120,6 +121,8 @@ def fetch_store_data(
             lambda nm: catalog.get(nm, {}).get('subject', ''))
         missing_df['category'] = missing_df['nmId'].map(
             lambda nm: catalog.get(nm, {}).get('category', ''))
+        missing_df['barcode'] = missing_df['nmId'].map(
+            lambda nm: catalog.get(nm, {}).get('barcode', ''))
         df = pd.concat([df, missing_df], ignore_index=True)
 
     # === 7. Обогащение метаданных из каталога для всех товаров ===
@@ -129,7 +132,21 @@ def fetch_store_data(
             df.loc[mask, col] = df.loc[mask, 'nmId'].map(
                 lambda nm: catalog.get(nm, {}).get(col, ''))
 
-    # === 7b. Fallback артикулов из Prices API (для товаров не в каталоге) ===
+    # === 7a. Обогащение баркодов из каталога ===
+    if 'barcode' not in df.columns:
+        df['barcode'] = ''
+    mask = df['barcode'].isna() | (df['barcode'] == '')
+    if mask.any():
+        df.loc[mask, 'barcode'] = df.loc[mask, 'nmId'].map(
+            lambda nm: catalog.get(nm, {}).get('barcode', ''))
+
+    # === 7b. Fallback баркодов из Prices API ===
+    mask = df['barcode'].isna() | (df['barcode'] == '')
+    if mask.any():
+        df.loc[mask, 'barcode'] = df.loc[mask, 'nmId'].map(
+            lambda nm: prices_barcodes.get(nm, ''))
+
+    # === 7c. Fallback артикулов из Prices API (для товаров не в каталоге) ===
     mask = df['supplierArticle'].isna() | (df['supplierArticle'] == '')
     if mask.any():
         df.loc[mask, 'supplierArticle'] = df.loc[mask, 'nmId'].map(
@@ -176,6 +193,7 @@ def fetch_store_data(
             'days_remaining': round(row['days_remaining'], 2) if row['days_remaining'] is not None else None,
             'price_increase_pct': int(row['price_increase_pct']),
             'price': float(row['price']) if pd.notna(row.get('price')) else None,
+            'barcode': row.get('barcode') or '',
         })
 
     return result

@@ -7,11 +7,12 @@ import logging
 
 import pandas as pd
 from openpyxl.comments import Comment
+from openpyxl.styles import Font
 
 from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
-from bot.services.calculations import merge_wh_by_name
+from bot.services.calculations import merge_wh_by_name, wh_compact_str
 from bot.reports.excel_styles import (
-    HYPERLINK_FONT, LEFT,
+    HYPERLINK_FONT, LEFT, WRAP_LEFT,
     WB_PRODUCT_URL,
     apply_header_style,
     apply_data_style,
@@ -98,6 +99,16 @@ def _apply_product_links(ws, article_col: int, nm_id_col: int):
             article_cell.alignment = LEFT
 
 
+def _style_wh_column(ws, wh_col: int, num_rows: int):
+    """Стилизует колонку детализации складов (font 9/gray, wrap_text)."""
+    wh_font = Font(name="Arial", size=9, color="555555")
+    for row_num in range(2, num_rows + 2):
+        cell = ws.cell(row=row_num, column=wh_col)
+        if cell.value is not None:
+            cell.font = wh_font
+            cell.alignment = WRAP_LEFT
+
+
 def generate_report_from_data(
     product_rows: list[dict],
     store_name: str = None,
@@ -128,14 +139,26 @@ def generate_report_from_data(
     if df.empty:
         logger.warning("Нет данных для отчёта")
         df = pd.DataFrame(columns=[
-            'nm_id', 'supplier_article', 'subject', 'category',
+            'nm_id', 'supplier_article', 'barcode', 'subject', 'category',
             'product_group', 'stock_qty', 'in_way_from_client', 'stock_qty_clean',
             'orders_7d', 'orders_14d', 'orders_30d',
             'avg_per_day', 'days_remaining', 'price_increase_pct', 'price',
         ])
 
-    # Индекс складов для комментариев
+    # Fallback для barcode (старые данные из БД могут не содержать колонку)
+    if 'barcode' not in df.columns:
+        df['barcode'] = ''
+    df['barcode'] = df['barcode'].fillna('')
+
+    # Индекс складов для комментариев и детализации
     wh_index = _build_wh_index(warehouse_rows, product_rows) if warehouse_rows else {}
+
+    # Детализация остатков по складам (компактная строка)
+    df['wh_detail'] = df.apply(
+        lambda r: wh_compact_str(wh_index.get(int(r['nm_id']), []))
+        if (r.get('stock_qty_clean') or 0) > 0 else "—",
+        axis=1,
+    )
 
     # Лист 1: Товары на исходе (есть остаток И нужно повышение цены)
     report = df[(df['stock_qty'] > 0) & (df['price_increase_pct'] > 0)].copy()
@@ -160,34 +183,34 @@ def generate_report_from_data(
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         # ── Лист 1: На исходе ────────────────────────────────────────────
         report_export = report[[
-            'supplier_article', 'nm_id', 'product_group',
+            'supplier_article', 'barcode', 'nm_id', 'product_group',
             'stock_qty_clean', 'in_way_from_client',
-            'avg_per_day', 'days_remaining', 'price'
+            'avg_per_day', 'days_remaining', 'price', 'wh_detail'
         ]].copy()
         report_export.columns = [
-            'Артикул', 'ID (WB)', 'Группа',
-            'Остаток', '_iwfc',
-            'Продаж/день', 'Дней осталось', 'Цена ₽'
+            'Артикул', 'Баркод', 'ID (WB)', 'Группа',
+            'Остаток\n(чистый)', '_iwfc',
+            'Продаж/день', 'Дней осталось', 'Цена ₽', 'Остатки по складам'
         ]
         report_export.to_excel(writer, sheet_name='На исходе', index=False)
 
         # ── Лист 2: Нет на складе ───────────────────────────────────────
         out_of_stock_export = out_of_stock[[
-            'supplier_article', 'nm_id', 'product_group', 'avg_per_day', 'price'
+            'supplier_article', 'barcode', 'nm_id', 'product_group', 'avg_per_day', 'price'
         ]].copy()
-        out_of_stock_export.columns = ['Артикул', 'ID (WB)', 'Группа', 'Продаж/день', 'Цена ₽']
+        out_of_stock_export.columns = ['Артикул', 'Баркод', 'ID (WB)', 'Группа', 'Продаж/день', 'Цена ₽']
         out_of_stock_export.to_excel(writer, sheet_name='Нет на складе', index=False)
 
         # ── Лист 3: Все товары ───────────────────────────────────────────
         all_export = all_products[[
-            'supplier_article', 'nm_id', 'product_group',
+            'supplier_article', 'barcode', 'nm_id', 'product_group',
             'stock_qty_clean', 'in_way_from_client',
-            'avg_per_day', 'days_remaining', 'price'
+            'avg_per_day', 'days_remaining', 'price', 'wh_detail'
         ]].copy()
         all_export.columns = [
-            'Артикул', 'ID (WB)', 'Группа',
-            'Остаток', '_iwfc',
-            'Продаж/день', 'Дней осталось', 'Цена ₽'
+            'Артикул', 'Баркод', 'ID (WB)', 'Группа',
+            'Остаток\n(чистый)', '_iwfc',
+            'Продаж/день', 'Дней осталось', 'Цена ₽', 'Остатки по складам'
         ]
         all_export.to_excel(writer, sheet_name='Все товары', index=False)
 
@@ -204,46 +227,57 @@ def generate_report_from_data(
         ws3 = writer.sheets['Все товары']
 
         # --- Лист 1: На исходе ---
-        # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=_iwfc, 6=Продаж/день, 7=Дней осталось, 8=Цена
-        apply_header_style(ws1, {1: 24, 2: 15, 3: 11, 4: 15, 5: 0, 6: 15, 7: 17, 8: 13})
-        apply_data_style(ws1, float_cols=[6, 7, 8], int_cols=[4])
-        apply_hyperlinks(ws1, link_col=2)
-        apply_group_colors(ws1, group_col=3)
+        # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
+        apply_header_style(ws1, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 36})
+        apply_data_style(ws1, float_cols=[7, 8, 9], int_cols=[5])
+        apply_hyperlinks(ws1, link_col=3)
+        apply_group_colors(ws1, group_col=4)
 
-        # Скрыть вспомогательную колонку _iwfc (col 5)
-        ws1.column_dimensions['E'].hidden = True
+        # Скрыть вспомогательную колонку _iwfc (col 6)
+        ws1.column_dimensions['F'].hidden = True
 
-        # Прочерк для товаров без продаж (col 7)
-        _format_days_remaining(ws1, report, days_col=7)
+        # Прочерк для товаров без продаж (col 8)
+        _format_days_remaining(ws1, report, days_col=8)
 
-        # Комментарии к остаткам (col 4) и ценам (col 8)
-        _apply_stock_comments(ws1, report, stock_col=4, wh_index=wh_index)
-        _apply_price_comments(ws1, report, price_col=8)
+        # Комментарии к остаткам (col 5) и ценам (col 9)
+        _apply_stock_comments(ws1, report, stock_col=5, wh_index=wh_index)
+        _apply_price_comments(ws1, report, price_col=9)
+
+        # Стилизация колонки складов (col 10) + авторазмер строк
+        _style_wh_column(ws1, wh_col=10, num_rows=len(report_export))
+        for row_num in range(2, len(report_export) + 2):
+            ws1.row_dimensions[row_num].height = None
 
         # --- Лист 2: Нет на складе ---
-        apply_header_style(ws2, {1: 24, 2: 15, 3: 11, 4: 15, 5: 13})
-        apply_data_style(ws2, float_cols=[4, 5], int_cols=[])
-        apply_hyperlinks(ws2, link_col=2)
-        apply_group_colors(ws2, group_col=3)
+        # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Продаж/день, 6=Цена
+        apply_header_style(ws2, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 13})
+        apply_data_style(ws2, float_cols=[5, 6], int_cols=[])
+        apply_hyperlinks(ws2, link_col=3)
+        apply_group_colors(ws2, group_col=4)
 
         # --- Лист 3: Все товары ---
-        # Колонки: 1=Артикул, 2=ID(WB), 3=Группа, 4=Остаток, 5=_iwfc, 6=Продаж/день, 7=Дней осталось, 8=Цена
-        apply_header_style(ws3, {1: 24, 2: 15, 3: 11, 4: 15, 5: 0, 6: 15, 7: 17, 8: 13})
-        apply_data_style(ws3, float_cols=[6, 7, 8], int_cols=[4])
-        apply_hyperlinks(ws3, link_col=2)
-        apply_group_colors(ws3, group_col=3)
+        # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
+        apply_header_style(ws3, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 36})
+        apply_data_style(ws3, float_cols=[7, 8, 9], int_cols=[5])
+        apply_hyperlinks(ws3, link_col=3)
+        apply_group_colors(ws3, group_col=4)
 
-        # Скрыть вспомогательную колонку _iwfc (col 5)
-        ws3.column_dimensions['E'].hidden = True
+        # Скрыть вспомогательную колонку _iwfc (col 6)
+        ws3.column_dimensions['F'].hidden = True
 
-        # Прочерк для товаров без продаж (col 7)
-        _format_days_remaining(ws3, all_products, days_col=7)
+        # Прочерк для товаров без продаж (col 8)
+        _format_days_remaining(ws3, all_products, days_col=8)
 
-        # Комментарии к остаткам (col 4)
-        _apply_stock_comments(ws3, all_products, stock_col=4, wh_index=wh_index)
+        # Комментарии к остаткам (col 5)
+        _apply_stock_comments(ws3, all_products, stock_col=5, wh_index=wh_index)
 
-        # Ссылки на карточку товара по артикулу (col 1 → nmId из col 2)
-        _apply_product_links(ws3, article_col=1, nm_id_col=2)
+        # Ссылки на карточку товара по артикулу (col 1 → nmId из col 3)
+        _apply_product_links(ws3, article_col=1, nm_id_col=3)
+
+        # Стилизация колонки складов (col 10) + авторазмер строк
+        _style_wh_column(ws3, wh_col=10, num_rows=len(all_export))
+        for row_num in range(2, len(all_export) + 2):
+            ws3.row_dimensions[row_num].height = None
 
         # ── Аннотации под таблицами ──────────────────────────────────────
         ws1_last = len(report_export) + 4

@@ -190,10 +190,15 @@ def get_catalog(token: str = None) -> dict:
             nm_id = card.get('nmID')
             if nm_id is None:
                 continue
+            # Извлекаем баркоды из sizes[].skus[]
+            barcodes = []
+            for size in card.get('sizes', []):
+                barcodes.extend(size.get('skus', []))
             catalog[nm_id] = {
                 'supplierArticle': card.get('vendorCode', ''),
                 'subject': card.get('subjectName', ''),
                 'category': card.get('subjectName', ''),
+                'barcode': ', '.join(barcodes) if barcodes else '',
             }
 
         # Курсорная пагинация: берём cursor из ответа
@@ -334,7 +339,7 @@ def get_stocks_detailed(nm_ids: list = None, token: str = None, _raw_df: pd.Data
     return df[cols].reset_index(drop=True)
 
 
-def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict]:
+def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict, dict]:
     """
     Получает цены товаров (после скидки) через Prices API.
 
@@ -343,9 +348,10 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict]:
         token: токен WB API
 
     Returns:
-        tuple (prices, articles):
+        tuple (prices, articles, barcodes):
             prices: dict {nmID: discountedPrice} — минимальная цена среди размеров
             articles: dict {nmID: vendorCode} — артикулы продавца
+            barcodes: dict {nmID: str} — баркоды (все SKU через ", ")
     """
     if token is None:
         token = get_token()
@@ -353,6 +359,7 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict]:
     nm_set = set(nm_ids) if nm_ids else None
     prices = {}
     articles = {}
+    barcodes = {}
     limit = 1000
     offset = 0
 
@@ -377,6 +384,12 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict]:
                 discounted = [s.get('discountedPrice') for s in sizes
                               if s.get('discountedPrice') is not None]
                 prices[nm_id] = min(discounted) if discounted else 0
+                # Извлечение баркодов из sizes[].skus[]
+                skus = []
+                for s in sizes:
+                    skus.extend(s.get('skus', []))
+                if skus:
+                    barcodes[nm_id] = ', '.join(skus)
             else:
                 prices[nm_id] = 0
 
@@ -384,8 +397,8 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict]:
             break
         offset += limit
 
-    logger.info(f"Загружено цен: {len(prices)}")
-    return prices, articles
+    logger.info(f"Загружено цен: {len(prices)}, баркодов: {len(barcodes)}")
+    return prices, articles, barcodes
 
 
 def get_orders(days: int = 7, token: str = None) -> pd.DataFrame:
