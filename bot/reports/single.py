@@ -12,7 +12,7 @@ from openpyxl.styles import Font
 from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
 from bot.services.calculations import merge_wh_by_name, wh_compact_str
 from bot.reports.excel_styles import (
-    HYPERLINK_FONT, LEFT, WRAP_LEFT,
+    HYPERLINK_FONT, LEFT,
     WB_PRODUCT_URL,
     apply_header_style,
     apply_data_style,
@@ -100,13 +100,13 @@ def _apply_product_links(ws, article_col: int, nm_id_col: int):
 
 
 def _style_wh_column(ws, wh_col: int, num_rows: int):
-    """Стилизует колонку детализации складов (font 9/gray, wrap_text)."""
+    """Стилизует колонку детализации складов (font 9/gray, без переноса текста)."""
     wh_font = Font(name="Arial", size=9, color="555555")
     for row_num in range(2, num_rows + 2):
         cell = ws.cell(row=row_num, column=wh_col)
         if cell.value is not None:
             cell.font = wh_font
-            cell.alignment = WRAP_LEFT
+            cell.alignment = LEFT
 
 
 def generate_report_from_data(
@@ -228,7 +228,7 @@ def generate_report_from_data(
 
         # --- Лист 1: На исходе ---
         # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
-        apply_header_style(ws1, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 64})
+        apply_header_style(ws1, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 32})
         apply_data_style(ws1, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
         apply_hyperlinks(ws1, link_col=3)
         apply_group_colors(ws1, group_col=4)
@@ -255,7 +255,7 @@ def generate_report_from_data(
 
         # --- Лист 3: Все товары ---
         # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
-        apply_header_style(ws3, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 64})
+        apply_header_style(ws3, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 32})
         apply_data_style(ws3, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
         apply_hyperlinks(ws3, link_col=3)
         apply_group_colors(ws3, group_col=4)
