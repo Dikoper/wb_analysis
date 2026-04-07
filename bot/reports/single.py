@@ -7,7 +7,7 @@ import logging
 
 import pandas as pd
 from openpyxl.comments import Comment
-from openpyxl.styles import Font
+from openpyxl.styles import Font, Border, Side
 
 from bot.config import (
     THRESHOLD_A, THRESHOLD_B, THRESHOLD_C,
@@ -24,7 +24,7 @@ from bot.reports.excel_styles import (
     apply_group_colors,
     apply_legend_style,
     add_stock_comment,
-    add_refill_dropdown,
+    add_days_dropdown,
     make_report_path,
 )
 
@@ -116,115 +116,130 @@ def _style_wh_column(ws, wh_col: int, num_rows: int):
 
 def _build_refill_sheet(
     writer,
-    df_running_out: pd.DataFrame,
+    df_refill: pd.DataFrame,
     refill_days: list[int],
     reserve_pct: float,
     wh_index: dict,
 ):
     """
-    Создаёт лист «Пополнение» с dropdown-ячейками объёма.
+    Создаёт лист «Поставки» — раздельные ячейки «Объём» и «Срок» с dropdown.
 
-    Колонки:
-        1 Артикул | 2 (пусто) | 3 Баркод |
-        4 Объём пополнения ▼ | 5 (пусто) | 6 Остатки по складам
+    Колонки (1..7) + 3 скрытые (8..10):
+        1 Артикул | 2 (gap) | 3 Баркод | 4 Объём пополнения | 5 Срок (дн) |
+        6 (gap) | 7 Остатки по складам | 8 _q1 | 9 _q2 | 10 _q3
 
-    df_running_out — тот же отфильтрованный набор, что на лист «На исходе».
-    refill_days — три порога (возрастающие).
-    reserve_pct — процент запаса надбавки.
+    Объём в колонке 4 — простая lookup-формула IF на скрытые H/I/J,
+    куда Python кладёт три предрассчитанных значения. Бизнес-логика расчёта
+    остаётся в Python (calc_refill_qty), формула в ячейке только выбирает
+    нужное значение по сроку из колонки E.
     """
     d1, d2, d3 = refill_days[0], refill_days[1], refill_days[2]
+    default_days = d2  # средний порог как значение по умолчанию
 
-    # Готовим плоский DataFrame для to_excel (значение по умолчанию — средний порог d2)
+    # Готовим плоский DataFrame для to_excel
     rows_out = []
-    per_row_options: list[list[str]] = []  # для dropdown
-    for _, r in df_running_out.iterrows():
-        avg = r.get('avg_per_day', 0) or 0
-        q1 = calc_refill_qty(avg, d1, reserve_pct)
-        q2 = calc_refill_qty(avg, d2, reserve_pct)
-        q3 = calc_refill_qty(avg, d3, reserve_pct)
-        default_val = f"{d2}д: {q2}"
-        options = [f"{d1}д: {q1}", f"{d2}д: {q2}", f"{d3}д: {q3}"]
-        per_row_options.append(options)
-
+    for _, r in df_refill.iterrows():
         rows_out.append({
             'Артикул': r.get('supplier_article', ''),
             '': '',  # разделитель (колонка 2)
             'Баркод': r.get('barcode', '') or '',
-            'Объём пополнения': default_val,
-            ' ': '',  # разделитель (колонка 5)
+            'Объём пополнения': '',   # будет перезаписана формулой
+            'Срок (дн)': default_days,
+            ' ': '',  # разделитель (колонка 6)
             'Остатки по складам': wh_compact_str(wh_index.get(int(r['nm_id']), [])),
+            '_q1': 0,
+            '_q2': 0,
+            '_q3': 0,
         })
 
     export_df = pd.DataFrame(
         rows_out,
-        columns=['Артикул', '', 'Баркод', 'Объём пополнения', ' ', 'Остатки по складам'],
+        columns=['Артикул', '', 'Баркод', 'Объём пополнения', 'Срок (дн)',
+                 ' ', 'Остатки по складам', '_q1', '_q2', '_q3'],
     )
-    export_df.to_excel(writer, sheet_name='Пополнение', index=False)
-    ws = writer.sheets['Пополнение']
+    export_df.to_excel(writer, sheet_name='Поставки', index=False)
+    ws = writer.sheets['Поставки']
 
-    # Стили шапки/ширины
+    # Стили шапки/ширины (видимые колонки 1..7)
     apply_header_style(
         ws,
-        {1: 26, 2: 2, 3: 20, 4: 22, 5: 2, 6: 36},
+        {1: 26, 2: 2, 3: 20, 4: 20, 5: 12, 6: 2, 7: 36},
         row_height=34,
         auto_filter=False,
     )
-    # Базовые стили данных (LEFT в 1-й колонке, центр в остальных)
+    # Скрыть служебные колонки H/I/J
+    for col_letter in ('H', 'I', 'J'):
+        ws.column_dimensions[col_letter].hidden = True
+
+    # Базовые стили данных
     apply_data_style(ws, float_cols=[], int_cols=[], row_height=None)
 
-    # Ссылка на карточку товара по артикулу (пройдёмся по всем строкам)
-    nm_ids = df_running_out['nm_id'].tolist()
-    for i, nm_id in enumerate(nm_ids):
-        row_num = i + 2
-        article_cell = ws.cell(row=row_num, column=1)
-        if article_cell.value and nm_id is not None:
-            article_cell.hyperlink = WB_PRODUCT_URL.format(int(nm_id))
-            article_cell.font = HYPERLINK_FONT
-            article_cell.alignment = LEFT
+    # Толстая рамка для колонок «Баркод» (3) и «Объём пополнения» (4)
+    medium = Side(style='medium', color='000000')
+    thick_border = Border(left=medium, right=medium, top=medium, bottom=medium)
+    ws.cell(row=1, column=3).border = thick_border
+    ws.cell(row=1, column=4).border = thick_border
 
-    # Баркод — текстовый формат, чтобы длинные числа не ломались
-    for i in range(len(df_running_out)):
+    # Заполнение строк: формулы, скрытые значения, dropdown, ссылки, бордюры
+    for i, (_, r) in enumerate(df_refill.iterrows()):
         row_num = i + 2
-        ws.cell(row=row_num, column=3).number_format = "@"
+        avg = float(r.get('avg_per_day') or 0)
+        nm_id = int(r['nm_id']) if r.get('nm_id') is not None else None
 
-    # Dropdown на «Объём пополнения» (колонка 4) — один DataValidation на строку
-    for i, options in enumerate(per_row_options):
-        row_num = i + 2
-        cell = ws.cell(row=row_num, column=4)
-        add_refill_dropdown(ws, cell, options)
+        # Скрытые H/I/J — предрассчитанные числа от Python
+        ws.cell(row=row_num, column=8).value = calc_refill_qty(avg, d1, reserve_pct)
+        ws.cell(row=row_num, column=9).value = calc_refill_qty(avg, d2, reserve_pct)
+        ws.cell(row=row_num, column=10).value = calc_refill_qty(avg, d3, reserve_pct)
 
-    # Колонка 6 — стиль складов (серый, мелкий, выравнивание слева)
-    wh_font = Font(name="Arial", size=9, color="555555")
-    for i in range(len(df_running_out)):
-        row_num = i + 2
-        c = ws.cell(row=row_num, column=6)
-        if c.value is not None:
-            c.font = wh_font
-            c.alignment = LEFT
-        # Комментарий с детализацией по складам
-        nm_id = int(df_running_out.iloc[i]['nm_id'])
-        raw_wh = wh_index.get(nm_id, [])
+        # Lookup-формула в D — без бизнес-логики
+        formula = (
+            f"=IF(E{row_num}={d1},H{row_num},"
+            f"IF(E{row_num}={d2},I{row_num},J{row_num}))"
+        )
+        d_cell = ws.cell(row=row_num, column=4)
+        d_cell.value = formula
+        d_cell.number_format = "0"
+        d_cell.border = thick_border
+
+        # Баркод — текст + толстая рамка
+        b_cell = ws.cell(row=row_num, column=3)
+        b_cell.number_format = "@"
+        b_cell.border = thick_border
+
+        # Срок — dropdown 10/30/60 (из настроек)
+        e_cell = ws.cell(row=row_num, column=5)
+        add_days_dropdown(ws, e_cell, refill_days)
+
+        # Артикул — гиперссылка на карточку WB
+        a_cell = ws.cell(row=row_num, column=1)
+        if a_cell.value and nm_id is not None:
+            a_cell.hyperlink = WB_PRODUCT_URL.format(nm_id)
+            a_cell.font = HYPERLINK_FONT
+            a_cell.alignment = LEFT
+
+        # Колонка 7 — стиль складов + комментарий
+        wh_cell = ws.cell(row=row_num, column=7)
+        if wh_cell.value is not None:
+            wh_cell.font = Font(name="Arial", size=9, color="555555")
+            wh_cell.alignment = LEFT
+        raw_wh = wh_index.get(nm_id, []) if nm_id is not None else []
         if raw_wh:
-            merged = merge_wh_by_name(raw_wh)
-            add_stock_comment(c, merged)
+            add_stock_comment(wh_cell, merge_wh_by_name(raw_wh))
 
     # Легенда под таблицей
-    last = len(df_running_out) + 3
-    ws.cell(
-        row=last, column=1,
-        value='— Объём пополнения —',
-    )
+    last = len(df_refill) + 3
+    ws.cell(row=last, column=1, value='— Объём поставки —')
     ws.cell(
         row=last + 1, column=1,
-        value=f'Формула: avg × дни × (1 + {int(reserve_pct)}%/100), округление вверх',
+        value=f'Расчёт в боте: avg × срок × (1 + {int(reserve_pct)}%/100), округление вверх',
     )
     ws.cell(
         row=last + 2, column=1,
-        value=f'Пороги: {d1} / {d2} / {d3} дней',
+        value=f'Срок выбирается из выпадающего списка в колонке E: {d1} / {d2} / {d3} дней',
     )
     ws.cell(
         row=last + 3, column=1,
-        value='Для копирования выбранного значения используйте Специальная вставка → только значения',
+        value='Объём в колонке D обновляется автоматически при смене срока',
     )
     legend_font = Font(name="Arial", size=9, italic=True, color="888888")
     title_font = Font(name="Arial", size=9, bold=True, color="888888")
@@ -324,17 +339,22 @@ def generate_report_from_data(
         ]
         report_export.to_excel(writer, sheet_name='На исходе', index=False)
 
-        # ── Лист 2: Нет на складе ───────────────────────────────────────
+        # ── Лист 2: Поставки (объёмы пополнения) ────────────────────────
+        # Фильтр: только товары с продажами и заполненным баркодом
+        refill_df = report[
+            (report['avg_per_day'] > 0) &
+            (report['barcode'].astype(str).str.strip() != '')
+        ].copy()
+        _build_refill_sheet(
+            writer, refill_df, refill_days, refill_reserve_pct, wh_index,
+        )
+
+        # ── Лист 3: Нет на складе ───────────────────────────────────────
         out_of_stock_export = out_of_stock[[
             'supplier_article', 'barcode', 'nm_id', 'product_group', 'avg_per_day', 'price'
         ]].copy()
         out_of_stock_export.columns = ['Артикул', 'Баркод', 'ID (WB)', 'Группа', 'Продаж/день', 'Цена ₽']
         out_of_stock_export.to_excel(writer, sheet_name='Нет на складе', index=False)
-
-        # ── Лист 3: Пополнение (объёмы поставок) ────────────────────────
-        _build_refill_sheet(
-            writer, report, refill_days, refill_reserve_pct, wh_index,
-        )
 
         # ── Лист 4: Все товары ───────────────────────────────────────────
         all_export = all_products[[

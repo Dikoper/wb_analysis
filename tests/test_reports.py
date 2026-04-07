@@ -27,7 +27,7 @@ class TestSingleReport:
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        assert set(wb.sheetnames) == {'На исходе', 'Нет на складе', 'Пополнение', 'Все товары'}
+        assert set(wb.sheetnames) == {'На исходе', 'Нет на складе', 'Поставки', 'Все товары'}
 
     def test_all_products_sheet_has_all_rows(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
@@ -44,6 +44,27 @@ class TestSingleReport:
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data([], store_name='Empty')
         assert os.path.exists(path)
+
+    def test_refill_sheet_uses_lookup_formula(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+        monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
+        path = generate_report_from_data(
+            product_rows, store_name='Test', warehouse_rows=warehouse_rows,
+        )
+        wb = load_workbook(path)
+        ws = wb['Поставки']
+        # Если есть строки данных — колонка D содержит формулу IF, E содержит число срока,
+        # H/I/J заполнены и скрыты.
+        if ws.max_row >= 2 and ws.cell(row=2, column=1).value:
+            d_cell = ws.cell(row=2, column=4)
+            assert isinstance(d_cell.value, str) and d_cell.value.startswith('=IF(')
+            e_cell = ws.cell(row=2, column=5)
+            assert e_cell.value in (10, 30, 60)
+            assert isinstance(ws.cell(row=2, column=8).value, (int, float))
+            assert isinstance(ws.cell(row=2, column=9).value, (int, float))
+            assert isinstance(ws.cell(row=2, column=10).value, (int, float))
+        assert ws.column_dimensions['H'].hidden is True
+        assert ws.column_dimensions['I'].hidden is True
+        assert ws.column_dimensions['J'].hidden is True
 
 
 class TestComparisonReport:

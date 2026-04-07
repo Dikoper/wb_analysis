@@ -334,31 +334,25 @@ def write_store_row(
     return _border
 
 
-def add_refill_dropdown(ws, cell, options: list[str]):
+def add_days_dropdown(ws, cell, days_options: list[int]):
     """
-    Добавляет per-cell DataValidation(type='list') с заданными значениями.
-
-    Значения передаются как обычный список строк; запятые и кавычки
-    в значениях не допускаются (формула Excel разделяет список запятыми).
+    Добавляет per-cell DataValidation(type='list') с числовыми сроками.
 
     Args:
         ws: openpyxl worksheet
-        cell: целевая ячейка (уже заполненная значением по умолчанию)
-        options: список строк, например ['10д: 15', '30д: 45', '60д: 90']
+        cell: целевая ячейка (уже заполненная числовым default'ом)
+        days_options: список int, например [10, 30, 60]
     """
-    # В Excel значения списка в formula1 разделяются запятыми.
-    # Чтобы не сломать парсер, убираем запятые и кавычки.
-    safe = [str(o).replace(',', ' ').replace('"', "'") for o in options]
-    formula = '"' + ",".join(safe) + '"'
-
+    safe = ",".join(str(int(d)) for d in days_options)
+    formula = f'"{safe}"'
     dv = DataValidation(
         type="list",
         formula1=formula,
-        allow_blank=True,
-        showDropDown=False,  # False = стрелка ВИДНА (атрибут называется "suppressDropDown")
+        allow_blank=False,
+        showDropDown=False,  # False = стрелка ВИДНА
     )
-    dv.prompt = "Выберите объём пополнения: 10 / 30 / 60 дней"
-    dv.promptTitle = "Объём пополнения"
+    dv.prompt = "Выберите срок поставки (дней)"
+    dv.promptTitle = "Срок поставки"
     dv.add(cell)
     ws.add_data_validation(dv)
 
