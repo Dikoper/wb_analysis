@@ -12,6 +12,7 @@ from bot.services.calculations import (
     merge_orders_stocks,
     merge_wh_by_name,
     aggregate_by_article,
+    calc_refill_qty,
 )
 
 
@@ -200,3 +201,38 @@ class TestAggregateByArticle:
         result = aggregate_by_article(product_rows)
         assert result['ART-3']['product_group'] == 'D'
         assert result['ART-3']['days_remaining'] is None
+
+
+# ── calc_refill_qty ──────────────────────────────────────────────────────────
+
+class TestCalcRefillQty:
+    def test_zero_avg(self):
+        assert calc_refill_qty(0, 30, 20) == 0
+
+    def test_none_avg(self):
+        assert calc_refill_qty(None, 30, 20) == 0
+
+    def test_negative_avg(self):
+        assert calc_refill_qty(-1.5, 30, 20) == 0
+
+    def test_basic_no_reserve(self):
+        # 1.5 * 10 * 1.0 = 15.0 → ceil = 15
+        assert calc_refill_qty(1.5, 10, 0) == 15
+
+    def test_basic_with_reserve(self):
+        # 1.5 * 30 * 1.2 = 54.0 → ceil = 54
+        assert calc_refill_qty(1.5, 30, 20) == 54
+
+    def test_ceil_rounding(self):
+        # 0.1 * 10 * 1.0 = 1.0 → ceil = 1
+        assert calc_refill_qty(0.1, 10, 0) == 1
+        # 0.11 * 10 * 1.0 = 1.1 → ceil = 2
+        assert calc_refill_qty(0.11, 10, 0) == 2
+
+    def test_high_reserve(self):
+        # 2 * 60 * 1.5 = 180 → ceil = 180
+        assert calc_refill_qty(2.0, 60, 50) == 180
+
+    def test_fractional_result_ceil(self):
+        # 0.7 * 30 * 1.2 = 25.2 → ceil = 26
+        assert calc_refill_qty(0.7, 30, 20) == 26

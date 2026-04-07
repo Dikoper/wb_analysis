@@ -5,6 +5,7 @@
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.comments import Comment
+from openpyxl.worksheet.datavalidation import DataValidation
 
 # ── Цветовые константы ────────────────────────────────────────────────────────
 
@@ -331,6 +332,35 @@ def write_store_row(
         c.number_format = "0.00"
 
     return _border
+
+
+def add_refill_dropdown(ws, cell, options: list[str]):
+    """
+    Добавляет per-cell DataValidation(type='list') с заданными значениями.
+
+    Значения передаются как обычный список строк; запятые и кавычки
+    в значениях не допускаются (формула Excel разделяет список запятыми).
+
+    Args:
+        ws: openpyxl worksheet
+        cell: целевая ячейка (уже заполненная значением по умолчанию)
+        options: список строк, например ['10д: 15', '30д: 45', '60д: 90']
+    """
+    # В Excel значения списка в formula1 разделяются запятыми.
+    # Чтобы не сломать парсер, убираем запятые и кавычки.
+    safe = [str(o).replace(',', ' ').replace('"', "'") for o in options]
+    formula = '"' + ",".join(safe) + '"'
+
+    dv = DataValidation(
+        type="list",
+        formula1=formula,
+        allow_blank=True,
+        showDropDown=False,  # False = стрелка ВИДНА (атрибут называется "suppressDropDown")
+    )
+    dv.prompt = "Выберите объём пополнения: 10 / 30 / 60 дней"
+    dv.promptTitle = "Объём пополнения"
+    dv.add(cell)
+    ws.add_data_validation(dv)
 
 
 def add_stock_comment(cell, wh_list: list[dict]):

@@ -11,7 +11,17 @@ from aiogram.fsm.context import FSMContext
 
 from bot.keyboards import MenuCB, SettingsCB, NavCB, SubscribeCB, settings_kb, calc_params_kb, cancel_kb
 from bot.core.states import MenuStates
-from bot.config import REPORT_TIME as DEFAULT_REPORT_TIME, DEFAULT_DAYS_N, THRESHOLD_A as DEFAULT_THRESHOLD_A, THRESHOLD_B as DEFAULT_THRESHOLD_B, THRESHOLD_C as DEFAULT_THRESHOLD_C
+from bot.config import (
+    REPORT_TIME as DEFAULT_REPORT_TIME,
+    DEFAULT_DAYS_N,
+    THRESHOLD_A as DEFAULT_THRESHOLD_A,
+    THRESHOLD_B as DEFAULT_THRESHOLD_B,
+    THRESHOLD_C as DEFAULT_THRESHOLD_C,
+    DEFAULT_REFILL_DAYS_1,
+    DEFAULT_REFILL_DAYS_2,
+    DEFAULT_REFILL_DAYS_3,
+    DEFAULT_REFILL_RESERVE_PCT,
+)
 from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber
 from bot.services.scheduler import reschedule_daily_reports
 from bot.utils.messages import edit_or_send
@@ -33,15 +43,26 @@ async def _send_settings(callback: CallbackQuery):
     await callback.answer()
 
 
+async def _get_calc_params() -> dict:
+    """Читает все параметры расчёта из настроек."""
+    return {
+        'days_n': int(await get_setting('calc_days_threshold', str(DEFAULT_DAYS_N))),
+        'threshold_a': float(await get_setting('calc_threshold_a', str(DEFAULT_THRESHOLD_A))),
+        'threshold_b': float(await get_setting('calc_threshold_b', str(DEFAULT_THRESHOLD_B))),
+        'threshold_c': float(await get_setting('calc_threshold_c', str(DEFAULT_THRESHOLD_C))),
+        'refill_days_1': int(await get_setting('refill_days_1', str(DEFAULT_REFILL_DAYS_1))),
+        'refill_days_2': int(await get_setting('refill_days_2', str(DEFAULT_REFILL_DAYS_2))),
+        'refill_days_3': int(await get_setting('refill_days_3', str(DEFAULT_REFILL_DAYS_3))),
+        'refill_reserve_pct': int(await get_setting('refill_reserve_pct', str(DEFAULT_REFILL_RESERVE_PCT))),
+    }
+
+
 async def _send_calc_params(callback: CallbackQuery):
     """Показывает подменю параметров расчёта."""
-    days_n = int(await get_setting('calc_days_threshold', str(DEFAULT_DAYS_N)))
-    threshold_a = float(await get_setting('calc_threshold_a', str(DEFAULT_THRESHOLD_A)))
-    threshold_b = float(await get_setting('calc_threshold_b', str(DEFAULT_THRESHOLD_B)))
-    threshold_c = float(await get_setting('calc_threshold_c', str(DEFAULT_THRESHOLD_C)))
+    params = await _get_calc_params()
     await callback.message.edit_text(
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(days_n, threshold_a, threshold_b, threshold_c),
+        reply_markup=calc_params_kb(**params),
         parse_mode="HTML"
     )
     await callback.answer()
@@ -204,12 +225,11 @@ async def set_days_threshold(message: Message, state: FSMContext, bot: Bot):
     await set_setting('calc_days_threshold', str(n))
     await state.clear()
 
-    threshold_a = float(await get_setting('calc_threshold_a', str(DEFAULT_THRESHOLD_A)))
-    threshold_b = float(await get_setting('calc_threshold_b', str(DEFAULT_THRESHOLD_B)))
+    params = await _get_calc_params()
     await edit_bot_msg(
         f"✅ Порог дней изменён на <b>{n}</b>\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(n, threshold_a, threshold_b)
+        reply_markup=calc_params_kb(**params)
     )
     logger.info(f"calc_days_threshold изменён на {n}")
 
@@ -292,10 +312,149 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
     await set_setting('calc_threshold_c', str(c))
     await state.clear()
 
-    days_n = int(await get_setting('calc_days_threshold', str(DEFAULT_DAYS_N)))
+    params = await _get_calc_params()
     await edit_bot_msg(
         f"✅ Пороги обновлены: A≥{a} · B≥{b} · C≥{c} · D<;{c}\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(days_n, a, b, c)
+        reply_markup=calc_params_kb(**params)
     )
     logger.info(f"calc_threshold: A={a}, B={b}, C={c}")
+
+
+# === Параметры расчёта: пороги пополнения ===
+
+@router.callback_query(SettingsCB.filter(F.action == "refill_days"))
+async def ask_refill_days(callback: CallbackQuery, state: FSMContext):
+    """Запрос трёх порогов пополнения (дни)."""
+    d1 = int(await get_setting('refill_days_1', str(DEFAULT_REFILL_DAYS_1)))
+    d2 = int(await get_setting('refill_days_2', str(DEFAULT_REFILL_DAYS_2)))
+    d3 = int(await get_setting('refill_days_3', str(DEFAULT_REFILL_DAYS_3)))
+    await callback.message.edit_text(
+        "📥 <b>Пороги объёмов пополнения</b>\n\n"
+        f"Текущие значения (дни):\n"
+        f"  <b>1</b> = {d1}\n"
+        f"  <b>2</b> = {d2}\n"
+        f"  <b>3</b> = {d3}\n\n"
+        "Введите три целых числа через точку с запятой:\n"
+        "<code>d1 ; d2 ; d3</code>\n"
+        "Пример: <code>10 ; 30 ; 60</code>\n\n"
+        "Числа должны идти по возрастанию и быть в диапазоне 1..365.",
+        reply_markup=_back_to_calc_params_kb(),
+        parse_mode="HTML"
+    )
+    await state.update_data(bot_msg_id=callback.message.message_id)
+    await state.set_state(MenuStates.set_refill_days)
+    await callback.answer()
+
+
+@router.message(MenuStates.set_refill_days, F.text)
+async def set_refill_days(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода трёх порогов пополнения."""
+    text = message.text.strip()
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    bot_msg_id = data.get('bot_msg_id')
+    chat_id = message.chat.id
+
+    async def edit_bot_msg(msg_text: str, reply_markup=None):
+        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
+
+    error_msg = (
+        "❌ Неверный формат. Введите три целых числа через точку с запятой:\n"
+        "<code>d1 ; d2 ; d3</code>\n"
+        "Пример: <code>10 ; 30 ; 60</code>\n"
+        "Требование: 1 ≤ d1 &lt; d2 &lt; d3 ≤ 365."
+    )
+
+    parts = text.split(';')
+    if len(parts) != 3:
+        await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
+        return
+
+    try:
+        d1 = int(parts[0].strip())
+        d2 = int(parts[1].strip())
+        d3 = int(parts[2].strip())
+    except ValueError:
+        await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
+        return
+
+    if not (1 <= d1 < d2 < d3 <= 365):
+        await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
+        return
+
+    await set_setting('refill_days_1', str(d1))
+    await set_setting('refill_days_2', str(d2))
+    await set_setting('refill_days_3', str(d3))
+    await state.clear()
+
+    params = await _get_calc_params()
+    await edit_bot_msg(
+        f"✅ Пороги пополнения: {d1}/{d2}/{d3} дн\n\n"
+        "📐 <b>Параметры расчёта</b>",
+        reply_markup=calc_params_kb(**params)
+    )
+    logger.info(f"refill_days: {d1}/{d2}/{d3}")
+
+
+@router.callback_query(SettingsCB.filter(F.action == "refill_reserve"))
+async def ask_refill_reserve(callback: CallbackQuery, state: FSMContext):
+    """Запрос процента запаса пополнения."""
+    current = int(await get_setting('refill_reserve_pct', str(DEFAULT_REFILL_RESERVE_PCT)))
+    await callback.message.edit_text(
+        "➕ <b>Запас пополнения (%)</b>\n\n"
+        f"Текущее значение: <b>{current}%</b>\n\n"
+        "Формула: <code>refill = avg × дни × (1 + запас/100)</code>\n\n"
+        "Введите целое число от 0 до 200.",
+        reply_markup=_back_to_calc_params_kb(),
+        parse_mode="HTML"
+    )
+    await state.update_data(bot_msg_id=callback.message.message_id)
+    await state.set_state(MenuStates.set_refill_reserve)
+    await callback.answer()
+
+
+@router.message(MenuStates.set_refill_reserve, F.text)
+async def set_refill_reserve(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода процента запаса."""
+    text = message.text.strip().rstrip('%').strip()
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    bot_msg_id = data.get('bot_msg_id')
+    chat_id = message.chat.id
+
+    async def edit_bot_msg(msg_text: str, reply_markup=None):
+        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
+
+    try:
+        pct = int(text)
+        if not (0 <= pct <= 200):
+            raise ValueError
+    except ValueError:
+        await edit_bot_msg(
+            "❌ Неверное значение. Введите целое число от 0 до 200.\n\n"
+            "➕ <b>Запас пополнения (%)</b>",
+            reply_markup=_back_to_calc_params_kb()
+        )
+        return
+
+    await set_setting('refill_reserve_pct', str(pct))
+    await state.clear()
+
+    params = await _get_calc_params()
+    await edit_bot_msg(
+        f"✅ Запас пополнения: <b>{pct}%</b>\n\n"
+        "📐 <b>Параметры расчёта</b>",
+        reply_markup=calc_params_kb(**params)
+    )
+    logger.info(f"refill_reserve_pct: {pct}")

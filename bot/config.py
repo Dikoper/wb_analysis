@@ -39,6 +39,12 @@ THRESHOLD_A = 4.0   # A: ≥4 (ходовые)
 THRESHOLD_B = 0.5   # B: ≥0.5, C: <0.5 (редкие)
 THRESHOLD_C = 0.2   # C: ≥0.2 (редкие), D: <0.2 (почти не продаются)
 
+# Пороги объёмов пополнения (дни) и процент запаса
+DEFAULT_REFILL_DAYS_1 = 10
+DEFAULT_REFILL_DAYS_2 = 30
+DEFAULT_REFILL_DAYS_3 = 60
+DEFAULT_REFILL_RESERVE_PCT = 20  # % надбавки к расчёту
+
 # Кэш данных API (минуты) — если данные свежее, повторный запрос к API не делается
 DATA_CACHE_TTL = int(os.getenv('DATA_CACHE_TTL', '30'))
 

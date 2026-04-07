@@ -18,7 +18,7 @@ class StoreCB(CallbackData, prefix="store"):
 
 
 class SettingsCB(CallbackData, prefix="settings"):
-    action: str  # "time", "stores"
+    action: str  # "time", "stores", "calc_params", "days_threshold", "group_thresholds", "refill_days", "refill_reserve"
 
 
 class NavCB(CallbackData, prefix="nav"):
@@ -143,7 +143,16 @@ def settings_kb(current_time: str = "09:00", is_subscribed: bool = False) -> Inl
     ])
 
 
-def calc_params_kb(days_n: int = 7, threshold_a: float = 4.0, threshold_b: float = 0.5, threshold_c: float = 0.2) -> InlineKeyboardMarkup:
+def calc_params_kb(
+    days_n: int = 7,
+    threshold_a: float = 4.0,
+    threshold_b: float = 0.5,
+    threshold_c: float = 0.2,
+    refill_days_1: int = 10,
+    refill_days_2: int = 30,
+    refill_days_3: int = 60,
+    refill_reserve_pct: int = 20,
+) -> InlineKeyboardMarkup:
     """Подменю параметров расчёта."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
@@ -153,6 +162,14 @@ def calc_params_kb(days_n: int = 7, threshold_a: float = 4.0, threshold_b: float
         [InlineKeyboardButton(
             text=f"📦 A≥{threshold_a} · B≥{threshold_b} · D<{threshold_c}",
             callback_data=SettingsCB(action="group_thresholds").pack()
+        )],
+        [InlineKeyboardButton(
+            text=f"📥 Пороги пополнения: {refill_days_1}/{refill_days_2}/{refill_days_3} дн",
+            callback_data=SettingsCB(action="refill_days").pack()
+        )],
+        [InlineKeyboardButton(
+            text=f"➕ Запас пополнения: {refill_reserve_pct}%",
+            callback_data=SettingsCB(action="refill_reserve").pack()
         )],
         [InlineKeyboardButton(
             text="← Назад",

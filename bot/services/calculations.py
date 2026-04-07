@@ -2,6 +2,8 @@
 Бизнес-логика расчётов: группировка товаров, остатки, цены.
 """
 
+import math
+
 import pandas as pd
 
 from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
@@ -75,6 +77,19 @@ def get_price_increase(days_remaining: float, days_threshold: int = 7) -> int:
         return 40
     else:
         return 50
+
+
+def calc_refill_qty(avg_per_day: float, days: int, reserve_pct: float) -> int:
+    """
+    Объём пополнения на N дней с процентным запасом.
+
+    refill = ceil(avg_per_day * days * (1 + reserve_pct/100))
+
+    Для avg_per_day <= 0 возвращает 0.
+    """
+    if not avg_per_day or avg_per_day <= 0:
+        return 0
+    return math.ceil(avg_per_day * days * (1 + reserve_pct / 100))
 
 
 def aggregate_by_article(rows: list[dict]) -> dict:

@@ -21,13 +21,13 @@ class TestSingleReport:
         assert path is not None
         assert os.path.exists(path)
 
-    def test_three_sheets(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+    def test_sheets(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        assert set(wb.sheetnames) == {'На исходе', 'Нет на складе', 'Все товары'}
+        assert set(wb.sheetnames) == {'На исходе', 'Нет на складе', 'Пополнение', 'Все товары'}
 
     def test_all_products_sheet_has_all_rows(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
