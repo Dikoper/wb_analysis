@@ -13,6 +13,9 @@ from bot.services.calculations import (
     merge_wh_by_name,
     aggregate_by_article,
     calc_refill_qty,
+    availability_ru,
+    trend_arrow,
+    calc_smart_refill_qty,
 )
 
 
@@ -236,3 +239,79 @@ class TestCalcRefillQty:
     def test_fractional_result_ceil(self):
         # 0.7 * 30 * 1.2 = 25.2 → ceil = 26
         assert calc_refill_qty(0.7, 30, 20) == 26
+
+
+# ── availability_ru ──────────────────────────────────────────────────────────
+
+class TestAvailabilityRu:
+    def test_known_values(self):
+        assert availability_ru('deficient') == 'дефицитный'
+        assert availability_ru('balanced') == 'сбалансированный'
+        assert availability_ru('actual') == 'стабильный'
+        assert availability_ru('nonActual') == 'слабый'
+        assert availability_ru('nonLiquid') == 'неликвид'
+
+    def test_empty(self):
+        assert availability_ru('') == '—'
+        assert availability_ru(None) == '—'
+
+    def test_unknown(self):
+        assert availability_ru('whatever') == '—'
+
+
+# ── trend_arrow ──────────────────────────────────────────────────────────────
+
+class TestTrendArrow:
+    def test_stable_zero(self):
+        assert trend_arrow(0) == '→ ±0%'
+
+    def test_stable_small(self):
+        assert trend_arrow(3) == '→ ±3%'
+        assert trend_arrow(-2) == '→ ±2%'
+
+    def test_up(self):
+        assert trend_arrow(15) == '↑ +15%'
+
+    def test_down(self):
+        # f'{-25:+.0f}%' → '-25%'
+        assert trend_arrow(-25) == '↓ -25%'
+
+    def test_none(self):
+        assert trend_arrow(None) == '—'
+
+
+# ── calc_smart_refill_qty ────────────────────────────────────────────────────
+
+class TestCalcSmartRefillQty:
+    def test_zero_avg(self):
+        assert calc_smart_refill_qty(0, 30, 20) == 0
+
+    def test_negative_avg(self):
+        assert calc_smart_refill_qty(-1, 30, 20) == 0
+
+    def test_nonliquid_returns_zero(self):
+        assert calc_smart_refill_qty(1.0, 30, 20, 'nonLiquid', 5, 10) == 0
+
+    def test_default_no_metrics(self):
+        # base = 1*30*1.2 = 36; f_avail=1, f_miss=1, f_trend=1 → 36
+        assert calc_smart_refill_qty(1.0, 30, 20) == 36
+
+    def test_deficient_with_high_miss(self):
+        # base=1*30*1.2=36; f_avail=1.5; miss=11 → f_miss=1.6;
+        # trend=40 → clamp 30 → f_trend=1.3
+        # 36*1.5*1.6*1.3 = 112.32 → ceil = 113
+        assert calc_smart_refill_qty(1.0, 30, 20, 'deficient', 11, 40) == 113
+
+    def test_trend_clamp_upper(self):
+        # balanced; miss=0; trend=500 → clamp 30 → f_trend=1.3
+        # base=1*30*1.0=30; 30*1.3 = 39
+        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, 500) == 39
+
+    def test_trend_clamp_lower(self):
+        # balanced; trend=-99 → clamp -20 → f_trend=0.8
+        # base=1*30*1.0=30; 30*0.8 = 24
+        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, -99) == 24
+
+    def test_nonactual_half(self):
+        # nonActual: f_avail=0.5; base=1*30*1=30 → 15
+        assert calc_smart_refill_qty(1.0, 30, 0, 'nonActual', 0, 0) == 15

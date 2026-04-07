@@ -410,6 +410,22 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
             "category": "",
         })
 
+        # ── Доп. метрики WB для умного предложения ──────────────────────
+        def _dh(d):
+            """{days, hours} → дробные дни."""
+            if not isinstance(d, dict):
+                return 0.0
+            return (d.get('days') or 0) + (d.get('hours') or 0) / 24.0
+
+        # Тренд: первая и последняя точка avgOrdersByMonth (на самом деле недельные)
+        by_month = metrics.get('avgOrdersByMonth') or []
+        trend_pct = 0.0
+        if len(by_month) >= 2:
+            first_v = (by_month[0] or {}).get('value') or 0
+            last_v = (by_month[-1] or {}).get('value') or 0
+            if first_v > 0:
+                trend_pct = (last_v - first_v) / first_v * 100
+
         orders_rows.append({
             "nmId": nm_id,
             "supplierArticle": item.get("vendorCode", ""),
@@ -418,6 +434,11 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
             "orders_count_14d": metrics.get("ordersCount", 0),
             "orders_count_7d": 0,  # Stocks Report не разделяет 7д/14д
             "avg_per_day": metrics.get("avgOrders", 0),  # готовый avg от WB
+            "availability": metrics.get("availability", "") or "",
+            "sale_rate_days": _dh(metrics.get("saleRate")),
+            "office_missing_days": _dh(metrics.get("officeMissingTime")),
+            "lost_orders": metrics.get("lostOrdersCount", 0) or 0,
+            "trend_pct": round(trend_pct, 1),
         })
 
     stocks_df = pd.DataFrame(stocks_rows)

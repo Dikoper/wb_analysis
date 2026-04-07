@@ -92,6 +92,88 @@ def calc_refill_qty(avg_per_day: float, days: int, reserve_pct: float) -> int:
     return math.ceil(avg_per_day * days * (1 + reserve_pct / 100))
 
 
+# ── Хелперы для блока «Предложение WB» ────────────────────────────────────────
+
+AVAILABILITY_RU = {
+    'deficient': 'дефицитный',
+    'balanced':  'сбалансированный',
+    'actual':    'стабильный',
+    'nonActual': 'слабый',
+    'nonLiquid': 'неликвид',
+}
+
+# Мультипликатор объёма по классификации WB. Все пороги собраны здесь, чтобы
+# их можно было крутить в одном месте.
+AVAILABILITY_MULT = {
+    'nonLiquid': 0.0,   # не поставлять
+    'nonActual': 0.5,
+    'balanced':  1.0,
+    'actual':    1.1,
+    'deficient': 1.5,
+}
+
+
+def availability_ru(val: str) -> str:
+    """RU-ярлык классификации WB. Неизвестные/пустые → '—'."""
+    return AVAILABILITY_RU.get((val or '').strip(), '—')
+
+
+def trend_arrow(pct: float) -> str:
+    """
+    Стрелка тренда по проценту изменения.
+
+    |pct| < 5% → '→ ±X%' (стабильно)
+    pct > 0   → '↑ +X%'
+    pct < 0   → '↓ -X%'
+    """
+    if pct is None:
+        return '—'
+    if abs(pct) < 5:
+        return f'→ ±{abs(pct):.0f}%'
+    arrow = '↑' if pct > 0 else '↓'
+    return f'{arrow} {pct:+.0f}%'
+
+
+def calc_smart_refill_qty(
+    avg: float,
+    target_days: int,
+    reserve_pct: float,
+    availability: str = '',
+    miss_days: float = 0.0,
+    trend_pct: float = 0.0,
+) -> int:
+    """
+    Умный расчёт объёма поставки с учётом WB-метрик.
+
+    Формула: ceil(base × f_avail × f_miss × f_trend)
+        base   = avg * target_days * (1 + reserve_pct/100)
+        f_avail — мультипликатор по availability (см. AVAILABILITY_MULT)
+        f_miss  — мультипликатор по простою склада (officeMissingTime.days)
+        f_trend — линейная корректировка по тренду продаж, clamp [-20%..+30%]
+    """
+    if not avg or avg <= 0:
+        return 0
+
+    f_avail = AVAILABILITY_MULT.get((availability or '').strip(), 1.0)
+    if f_avail == 0.0:
+        return 0  # неликвид — не поставлять
+
+    if miss_days > 10:
+        f_miss = 1.6
+    elif miss_days > 5:
+        f_miss = 1.3
+    elif miss_days > 2:
+        f_miss = 1.1
+    else:
+        f_miss = 1.0
+
+    t = max(-20.0, min(30.0, trend_pct or 0.0)) / 100.0
+    f_trend = 1.0 + t
+
+    base = avg * target_days * (1.0 + reserve_pct / 100.0)
+    return int(math.ceil(base * f_avail * f_miss * f_trend))
+
+
 def aggregate_by_article(rows: list[dict]) -> dict:
     """
     Группировка товаров по supplier_article с агрегацией дублей.

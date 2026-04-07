@@ -69,6 +69,15 @@ async def _migrate_product_barcode(db):
     await _migrate_add_column_safe(db, 'product_data', 'barcode', 'TEXT')
 
 
+async def _migrate_product_wb_metrics(db):
+    """Доп. метрики WB для блока «Предложение WB» на листе «Поставки»."""
+    await _migrate_add_column_safe(db, 'product_data', 'availability', 'TEXT')
+    await _migrate_add_column_safe(db, 'product_data', 'sale_rate_days', 'REAL DEFAULT 0')
+    await _migrate_add_column_safe(db, 'product_data', 'office_missing_days', 'REAL DEFAULT 0')
+    await _migrate_add_column_safe(db, 'product_data', 'lost_orders', 'REAL DEFAULT 0')
+    await _migrate_add_column_safe(db, 'product_data', 'trend_pct', 'REAL DEFAULT 0')
+
+
 async def _migrate_cache_meta(db):
     """Таблица метаданных кеша: один timestamp на снимок вместо fetched_at в каждой строке."""
     await db.execute('''
@@ -110,6 +119,7 @@ MIGRATIONS = [
     (6, _migrate_warehouse_supplier_article),
     (7, _migrate_cache_meta),
     (8, _migrate_product_barcode),
+    (9, _migrate_product_wb_metrics),
 ]
 
 

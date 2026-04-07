@@ -74,6 +74,17 @@ def fetch_store_data(
     logger.info(f"✓ Stocks Report: {len(stocks)} товаров")
 
     # === 5. OUTER JOIN: stocks + orders ===
+    # Сохраняем новые WB-метрики из orders в отдельный индекс — merge_orders_stocks
+    # о них не знает, чтобы не ломать сигнатуру/тесты.
+    metrics_index = {}
+    if not orders.empty:
+        metric_cols = ('availability', 'sale_rate_days', 'office_missing_days',
+                       'lost_orders', 'trend_pct')
+        present = [c for c in metric_cols if c in orders.columns]
+        if present:
+            for _, r in orders.iterrows():
+                metrics_index[int(r['nmId'])] = {c: r.get(c) for c in present}
+
     df = merge_orders_stocks(orders, stocks)
 
     # Заполняем поля возвратов если отсутствуют после merge
@@ -167,8 +178,10 @@ def fetch_store_data(
     # Конвертируем в list[dict] для сохранения в БД
     result = []
     for _, row in df.iterrows():
+        nm_id = int(row['nmId'])
+        m = metrics_index.get(nm_id, {})
         result.append({
-            'nm_id': int(row['nmId']),
+            'nm_id': nm_id,
             'supplier_article': row.get('supplierArticle'),
             'subject': row.get('subject'),
             'category': row.get('category'),
@@ -184,6 +197,12 @@ def fetch_store_data(
             'price_increase_pct': int(row['price_increase_pct']),
             'price': float(row['price']) if pd.notna(row.get('price')) else None,
             'barcode': row.get('barcode') if pd.notna(row.get('barcode')) else '',
+            # Новые WB-метрики (для блока «Предложение WB» на листе «Поставки»)
+            'availability': (m.get('availability') or '') if m else '',
+            'sale_rate_days': float(m.get('sale_rate_days') or 0) if m else 0.0,
+            'office_missing_days': float(m.get('office_missing_days') or 0) if m else 0.0,
+            'lost_orders': float(m.get('lost_orders') or 0) if m else 0.0,
+            'trend_pct': float(m.get('trend_pct') or 0) if m else 0.0,
         })
 
     return result
@@ -218,11 +237,15 @@ async def fetch_or_cache_product(store_id, token, days_threshold, threshold_a, t
     """Загружает данные товаров из кэша или API."""
     if not force_refresh and await is_data_fresh(store_id, DATA_CACHE_TTL):
         rows, _ = await get_latest_product_data(store_id)
-        # Проверяем что кэш содержит баркоды, иначе перезагружаем
+        # Проверяем что кэш содержит баркоды и новые WB-метрики
         has_barcodes = any(r.get('barcode') for r in rows) if rows else False
-        if rows and has_barcodes:
+        # availability — индикатор расширенного снимка (после внедрения «Предложения WB»).
+        # Поле может быть пустой строкой для отдельных товаров, поэтому проверяем
+        # наличие ключа в любой записи, а не его truthiness.
+        has_wb_metrics = any('availability' in r for r in rows) if rows else False
+        if rows and has_barcodes and has_wb_metrics:
             return rows
-        logger.info("Кэш без баркодов — принудительная перезагрузка")
+        logger.info("Кэш без баркодов или WB-метрик — принудительная перезагрузка")
     rows = await asyncio.to_thread(
         fetch_store_data, token=token,
         days_threshold=days_threshold,
