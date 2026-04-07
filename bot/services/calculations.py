@@ -104,12 +104,15 @@ AVAILABILITY_RU = {
 
 # Мультипликатор объёма по классификации WB. Все пороги собраны здесь, чтобы
 # их можно было крутить в одном месте.
+# Пороги подобраны консервативно: типичная корректировка к базовой формуле
+# составляет ±20..+50%, максимальная комбинация (deficient + high miss + strong
+# uptrend) — не более ~1.7× базовой.
 AVAILABILITY_MULT = {
     'nonLiquid': 0.0,   # не поставлять
-    'nonActual': 0.5,
+    'nonActual': 0.7,
     'balanced':  1.0,
-    'actual':    1.1,
-    'deficient': 1.5,
+    'actual':    1.05,
+    'deficient': 1.25,
 }
 
 
@@ -159,15 +162,15 @@ def calc_smart_refill_qty(
         return 0  # неликвид — не поставлять
 
     if miss_days > 10:
-        f_miss = 1.6
+        f_miss = 1.20
     elif miss_days > 5:
-        f_miss = 1.3
+        f_miss = 1.10
     elif miss_days > 2:
-        f_miss = 1.1
+        f_miss = 1.05
     else:
         f_miss = 1.0
 
-    t = max(-20.0, min(30.0, trend_pct or 0.0)) / 100.0
+    t = max(-15.0, min(15.0, trend_pct or 0.0)) / 100.0
     f_trend = 1.0 + t
 
     base = avg * target_days * (1.0 + reserve_pct / 100.0)

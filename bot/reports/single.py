@@ -136,11 +136,11 @@ def _build_refill_sheet(
 
     Разделитель: col 8 (gap-separator).
 
-    Предложение WB (col 9..16) — зеркально основному, баркод+объём впереди:
-        9 Баркод | 10 Объём WB | 11 Дней | 12 Оборотность | 13 Простой |
-        14 Упущено | 15 Срок WB | 16 Тренд
+    Предложение WB (col 9..15) — зеркально основному, баркод+объём впереди:
+        9 Баркод | 10 Объём WB | 11 Оборотность | 12 Простой поставки |
+        13 Упущено | 14 Срок распродажи остатка (WB) | 15 Тренд
 
-    Скрытые Q/R/S (17..19) — предрассчитанные значения IF-формулы col 4.
+    Скрытые P/Q/R (16..18) — предрассчитанные значения IF-формулы col 4.
 
     Шапка двухстрочная: row 1 — merge-баннер блоков, row 2 — подзаголовки.
     Данные начинаются с row 3, freeze_panes='A3'.
@@ -161,12 +161,12 @@ def _build_refill_sheet(
     col_widths = {
         1: 26, 2: 2, 3: 20, 4: 12, 5: 8, 6: 2, 7: 36,
         8: 3,
-        9: 20, 10: 12, 11: 7, 12: 16, 13: 14, 14: 11, 15: 12, 16: 12,
-        17: 0, 18: 0, 19: 0,  # скрытые
+        9: 20, 10: 12, 11: 16, 12: 14, 13: 11, 14: 14, 15: 12,
+        16: 0, 17: 0, 18: 0,  # скрытые P/Q/R
     }
     for col_num, width in col_widths.items():
         ws.column_dimensions[get_column_letter(col_num)].width = width
-    for col_letter in ('Q', 'R', 'S'):
+    for col_letter in ('P', 'Q', 'R'):
         ws.column_dimensions[col_letter].hidden = True
 
     # ── Row 1: merge-баннеры ─────────────────────────────────────────────
@@ -184,12 +184,12 @@ def _build_refill_sheet(
     for col in range(1, 9):
         ws.cell(row=1, column=col).fill = banner_main_fill
 
-    ws.merge_cells('I1:P1')
+    ws.merge_cells('I1:O1')
     c = ws.cell(row=1, column=9, value='ПРЕДЛОЖЕНИЕ WB')
     c.font = banner_font
     c.fill = banner_wb_fill
     c.alignment = banner_align
-    for col in range(9, 17):
+    for col in range(9, 16):
         ws.cell(row=1, column=col).fill = banner_wb_fill
 
     ws.row_dimensions[1].height = 22
@@ -198,8 +198,8 @@ def _build_refill_sheet(
     headers = [
         'Артикул', '', 'Баркод', 'Объём', 'Срок (дн)', '', 'Остатки по складам',
         '',
-        'Баркод', 'Объём WB', 'Дней', 'Оборотность', 'Простой поставки',
-        'Упущено заказов', 'Срок продаж WB', 'Тренд',
+        'Баркод', 'Объём WB', 'Оборотность', 'Простой поставки',
+        'Упущено заказов', 'Срок рапродажи остатка (WB)', 'Тренд',
     ]
     header_font = Font(name='Arial', size=11, bold=True, color=HEADER_FG)
     header_fill = PatternFill('solid', fgColor=HEADER_BG)
@@ -211,6 +211,18 @@ def _build_refill_sheet(
         cell.alignment = header_align
         cell.border = thin_border('444444')
     ws.row_dimensions[2].height = 34
+
+    # Комментарий к шапке «Срок распродажи (WB)» — объясняет, что это прогноз WB
+    sale_rate_header = ws.cell(row=2, column=14)
+    sale_rate_header.comment = Comment(
+        "Прогноз от WB: за сколько дней при текущей динамике спроса "
+        "распродастся текущий остаток.\n\n"
+        "Источник: поле saleRate в Stocks Report API. Это собственный "
+        "алгоритм WB (учитывает сезонность, тренды, дефицит), может "
+        "сильно отличаться от простого остаток/ср.продажи.\n\n"
+        "Показано справочно — в расчёте объёма не используется.",
+        "WB Analiz",
+    )
 
     ws.freeze_panes = 'A3'
 
@@ -253,10 +265,10 @@ def _build_refill_sheet(
         b_cell.number_format = '@'
         b_cell.border = thick_border
 
-        # 4: IF-формула на скрытые Q/R/S
+        # 4: IF-формула на скрытые P/Q/R
         formula = (
-            f"=IF(E{row_num}={d1},Q{row_num},"
-            f"IF(E{row_num}={d2},R{row_num},S{row_num}))"
+            f"=IF(E{row_num}={d1},P{row_num},"
+            f"IF(E{row_num}={d2},Q{row_num},R{row_num}))"
         )
         d_cell = ws.cell(row=row_num, column=4, value=formula)
         d_cell.font = data_font
@@ -306,51 +318,46 @@ def _build_refill_sheet(
         c.number_format = '0'
         c.border = thick_border
 
-        # 11: Дней (target_days)
-        c = ws.cell(row=row_num, column=11, value=default_days)
-        c.font = data_font
-        c.alignment = CENTER
-        c.number_format = '0'
-        c.border = data_border
-
-        # 12: Оборотность
-        c = ws.cell(row=row_num, column=12, value=availability_ru(avail))
+        # 11: Оборотность
+        c = ws.cell(row=row_num, column=11, value=availability_ru(avail))
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border
 
-        # 13: Простой поставки
-        c = ws.cell(row=row_num, column=13, value=f'{miss:.0f} / 14 дн')
+        # 12: Простой поставки
+        c = ws.cell(row=row_num, column=12, value=f'{miss:.0f} / 14 дн')
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border
 
-        # 14: Упущено заказов (+ красная подсветка)
-        lost_val = round(lost) if lost > 0 else '—'
-        c = ws.cell(row=row_num, column=14, value=lost_val)
+        # 13: Упущено заказов (+ красная подсветка).
+        # Проверяем округлённое значение: 0.3 → round=0 → '—' без заливки.
+        lost_rounded = round(lost)
+        c = ws.cell(row=row_num, column=13,
+                    value=lost_rounded if lost_rounded > 0 else '—')
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border
-        if lost > 0:
+        if lost_rounded > 0:
             c.fill = burning_fill
 
-        # 15: Срок продаж WB
+        # 14: Срок продаж (WB) — прогноз WB (saleRate)
         sr_val = f'{int(max(0, sale_rate))} дн' if sale_rate > 0 else '—'
-        c = ws.cell(row=row_num, column=15, value=sr_val)
+        c = ws.cell(row=row_num, column=14, value=sr_val)
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border
 
-        # 16: Тренд
-        c = ws.cell(row=row_num, column=16, value=trend_arrow(trend))
+        # 15: Тренд
+        c = ws.cell(row=row_num, column=15, value=trend_arrow(trend))
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border
 
-        # ── Скрытые Q/R/S — предрассчитанные значения для IF ─────────
-        ws.cell(row=row_num, column=17, value=calc_refill_qty(avg, d1, reserve_pct))
-        ws.cell(row=row_num, column=18, value=calc_refill_qty(avg, d2, reserve_pct))
-        ws.cell(row=row_num, column=19, value=calc_refill_qty(avg, d3, reserve_pct))
+        # ── Скрытые P/Q/R — предрассчитанные значения для IF ─────────
+        ws.cell(row=row_num, column=16, value=calc_refill_qty(avg, d1, reserve_pct))
+        ws.cell(row=row_num, column=17, value=calc_refill_qty(avg, d2, reserve_pct))
+        ws.cell(row=row_num, column=18, value=calc_refill_qty(avg, d3, reserve_pct))
 
     # ── Заливка gap-колонок (для всех строк, включая шапку) ─────────────
     last_data_row = len(df_refill) + 2
@@ -368,12 +375,13 @@ def _build_refill_sheet(
         ('Объём в колонке D обновляется автоматически при смене срока', False),
         ('', False),
         ('— Предложение WB —', True),
-        ('Умный расчёт с учётом WB-метрик:', False),
-        ('  · Оборотность (availability): дефицитный → ×1.5, стабильный → ×1.1, '
-         'слабый → ×0.5, неликвид → 0 (не поставлять)', False),
-        ('  · Простой поставки (officeMissingTime): >10д +60%, >5д +30%, >2д +10%', False),
-        ('  · Тренд (avgOrdersByMonth): clamp [−20%..+30%]', False),
+        (f'Умный расчёт с учётом WB-метрик (срок {d2} дней фиксированный):', False),
+        ('  · Оборотность: дефицитный → ×1.25, стабильный → ×1.05, '
+         'слабый → ×0.7, неликвид → 0 (не поставлять)', False),
+        ('  · Простой поставки: >10д +20%, >5д +10%, >2д +5%', False),
+        ('  · Тренд продаж: линейная корректировка, clamp [−15%..+15%]', False),
         ('🔴 Красная подсветка «Упущено заказов» = товар терял продажи в дефицит', False),
+        ('Срок «Срок продаж (WB)» — справочный прогноз от WB (наведите курсор на шапку)', False),
     ]
     title_font = Font(name='Arial', size=9, bold=True, color='888888')
     legend_font = Font(name='Arial', size=9, italic=True, color='888888')

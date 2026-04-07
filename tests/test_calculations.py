@@ -297,21 +297,29 @@ class TestCalcSmartRefillQty:
         assert calc_smart_refill_qty(1.0, 30, 20) == 36
 
     def test_deficient_with_high_miss(self):
-        # base=1*30*1.2=36; f_avail=1.5; miss=11 → f_miss=1.6;
-        # trend=40 → clamp 30 → f_trend=1.3
-        # 36*1.5*1.6*1.3 = 112.32 → ceil = 113
-        assert calc_smart_refill_qty(1.0, 30, 20, 'deficient', 11, 40) == 113
+        # base=1*30*1.2=36; f_avail=1.25; miss=11 → f_miss=1.20;
+        # trend=40 → clamp 15 → f_trend=1.15
+        # 36*1.25*1.20*1.15 = 62.1 → ceil = 63
+        assert calc_smart_refill_qty(1.0, 30, 20, 'deficient', 11, 40) == 63
 
     def test_trend_clamp_upper(self):
-        # balanced; miss=0; trend=500 → clamp 30 → f_trend=1.3
-        # base=1*30*1.0=30; 30*1.3 = 39
-        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, 500) == 39
+        # balanced; miss=0; trend=500 → clamp 15 → f_trend=1.15
+        # base=1*30*1.0=30; 30*1.15 = 34.5 → ceil = 35
+        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, 500) == 35
 
     def test_trend_clamp_lower(self):
-        # balanced; trend=-99 → clamp -20 → f_trend=0.8
-        # base=1*30*1.0=30; 30*0.8 = 24
-        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, -99) == 24
+        # balanced; trend=-99 → clamp -15 → f_trend=0.85
+        # base=1*30*1.0=30; 30*0.85 = 25.5 → ceil = 26
+        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, -99) == 26
 
-    def test_nonactual_half(self):
-        # nonActual: f_avail=0.5; base=1*30*1=30 → 15
-        assert calc_smart_refill_qty(1.0, 30, 0, 'nonActual', 0, 0) == 15
+    def test_nonactual_penalty(self):
+        # nonActual: f_avail=0.7; base=1*30*1=30 → 21
+        assert calc_smart_refill_qty(1.0, 30, 0, 'nonActual', 0, 0) == 21
+
+    def test_max_combo_under_2x(self):
+        """Максимальная комбинация должна быть не больше ~1.7× базовой."""
+        base = 100  # avg=100/(30*1)=3.333
+        result = calc_smart_refill_qty(100 / 30, 30, 0, 'deficient', 11, 15)
+        # 100 * 1.25 * 1.20 * 1.15 = 172.5 → 173
+        assert result <= 180, f'Expected ≤180, got {result}'
+        assert result >= 160, f'Expected ≥160 (still boosted), got {result}'
