@@ -21,7 +21,7 @@ from bot.services.calculations import (
 )
 from bot.reports.excel_styles import (
     HYPERLINK_FONT, LEFT, CENTER, WRAP_LEFT,
-    HEADER_BG, HEADER_FG,
+    HEADER_BG, HEADER_FG, GROUP_COLORS,
     WB_PRODUCT_URL,
     apply_header_style,
     apply_data_style,
@@ -159,9 +159,9 @@ def _build_refill_sheet(
 
     # ── Конфигурация колонок ─────────────────────────────────────────────
     col_widths = {
-        1: 26, 2: 2, 3: 20, 4: 12, 5: 8, 6: 2, 7: 36,
+        1: 26, 2: 2, 3: 20, 4: 12, 5: 9, 6: 9, 7: 36,
         8: 3,
-        9: 20, 10: 12, 11: 16, 12: 14, 13: 11, 14: 14, 15: 12,
+        9: 20, 10: 12, 11: 14, 12: 14, 13: 11, 14: 22, 15: 12,
         16: 0, 17: 0, 18: 0,  # скрытые P/Q/R
     }
     for col_num, width in col_widths.items():
@@ -175,28 +175,28 @@ def _build_refill_sheet(
     banner_wb_fill = PatternFill('solid', fgColor='FFE699')
     banner_align = Alignment(horizontal='center', vertical='center')
 
-    ws.merge_cells('A1:H1')
+    ws.merge_cells('A1:G1')
     c = ws.cell(row=1, column=1, value='— Основной расчёт —')
     c.font = banner_font
     c.fill = banner_main_fill
     c.alignment = banner_align
     # Применяем заливку ко всем ячейкам merged-диапазона (для рамок)
-    for col in range(1, 9):
+    for col in range(1, 8):
         ws.cell(row=1, column=col).fill = banner_main_fill
 
-    ws.merge_cells('I1:O1')
-    c = ws.cell(row=1, column=9, value='ПРЕДЛОЖЕНИЕ WB')
+    ws.merge_cells('H1:O1')
+    c = ws.cell(row=1, column=8, value='ПРЕДЛОЖЕНИЕ WB')
     c.font = banner_font
     c.fill = banner_wb_fill
     c.alignment = banner_align
-    for col in range(9, 16):
+    for col in range(8, 16):
         ws.cell(row=1, column=col).fill = banner_wb_fill
 
     ws.row_dimensions[1].height = 22
 
     # ── Row 2: подзаголовки ──────────────────────────────────────────────
     headers = [
-        'Артикул', '', 'Баркод', 'Объём', 'Срок (дн)', '', 'Остатки по складам',
+        'Артикул', '', 'Баркод', 'Объём', 'Срок (дн)', 'Группа', 'Остатки по складам',
         '',
         'Баркод', 'Объём WB', 'Оборотность', 'Простой поставки',
         'Упущено заказов', 'Срок рапродажи остатка (WB)', 'Тренд',
@@ -223,6 +223,8 @@ def _build_refill_sheet(
         "Показано справочно — в расчёте объёма не используется.",
         "WB Analiz",
     )
+    sale_rate_header.comment.width = 360
+    sale_rate_header.comment.height = 180
 
     ws.freeze_panes = 'A3'
 
@@ -282,6 +284,15 @@ def _build_refill_sheet(
         e_cell.alignment = CENTER
         e_cell.border = data_border
         add_days_dropdown(ws, e_cell, refill_days)
+
+        # 6: Группа популярности (A/B/C/D) с заливкой фона
+        group = (r.get('product_group') or '').strip() if isinstance(r.get('product_group'), str) else (r.get('product_group') or '')
+        g_cell = ws.cell(row=row_num, column=6, value=group or '')
+        g_cell.font = Font(name='Arial', size=10, bold=True, color='1A1A2E')
+        g_cell.alignment = CENTER
+        g_cell.border = data_border
+        if group in GROUP_COLORS:
+            g_cell.fill = fill(GROUP_COLORS[group])
 
         # 7: Остатки по складам (wrap)
         wh_str = wh_compact_str(wh_index.get(nm_id, [])) if nm_id is not None else '—'
@@ -348,23 +359,28 @@ def _build_refill_sheet(
         c.alignment = CENTER
         c.border = data_border
 
-        # 15: Тренд
+        # 15: Тренд — заливка фона по знаку (порог ±5% совпадает с trend_arrow)
         c = ws.cell(row=row_num, column=15, value=trend_arrow(trend))
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border
+        if trend >= 5:
+            c.fill = PatternFill('solid', fgColor='C8E6C9')   # светло-зелёный
+        elif trend <= -5:
+            c.fill = PatternFill('solid', fgColor='FFCCBC')   # светло-оранжевый
+        else:
+            c.fill = PatternFill('solid', fgColor='EEEEEE')   # светло-серый
 
         # ── Скрытые P/Q/R — предрассчитанные значения для IF ─────────
         ws.cell(row=row_num, column=16, value=calc_refill_qty(avg, d1, reserve_pct))
         ws.cell(row=row_num, column=17, value=calc_refill_qty(avg, d2, reserve_pct))
         ws.cell(row=row_num, column=18, value=calc_refill_qty(avg, d3, reserve_pct))
 
-    # ── Заливка gap-колонок (для всех строк, включая шапку) ─────────────
+    # ── Заливка separator-колонки (col 8) в жёлтый (в цвет баннера WB) ──
     last_data_row = len(df_refill) + 2
+    sep_yellow = PatternFill('solid', fgColor='FFE699')
     for r in range(2, last_data_row + 1):
-        for c in (2, 6):
-            ws.cell(row=r, column=c).fill = gap_fill
-        ws.cell(row=r, column=8).fill = sep_fill
+        ws.cell(row=r, column=8).fill = sep_yellow
 
     # ── Легенда под таблицей ────────────────────────────────────────────
     last = last_data_row + 2

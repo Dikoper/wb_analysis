@@ -245,9 +245,9 @@ class TestCalcRefillQty:
 
 class TestAvailabilityRu:
     def test_known_values(self):
-        assert availability_ru('deficient') == 'дефицитный'
-        assert availability_ru('balanced') == 'сбалансированный'
-        assert availability_ru('actual') == 'стабильный'
+        assert availability_ru('deficient') == 'дефицит'
+        assert availability_ru('balanced') == 'баланс'
+        assert availability_ru('actual') == 'ликвид'
         assert availability_ru('nonActual') == 'слабый'
         assert availability_ru('nonLiquid') == 'неликвид'
 

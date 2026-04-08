@@ -167,18 +167,16 @@ class TestSingleReport:
         assert cell.alignment.wrap_text is True
 
     def test_gap_columns_have_fill(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
-        """Gap-колонки (2, 6) и separator (8) — залиты."""
+        """Separator col 8 — залит жёлтым (в цвет баннера «ПРЕДЛОЖЕНИЕ WB»)."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
         ws = wb['Поставки']
-        # Row 3 — первая строка данных
-        for col in (2, 6, 8):
-            cell = ws.cell(row=3, column=col)
-            rgb = cell.fill.fgColor.rgb
-            assert rgb is not None and rgb != '00000000'
+        cell = ws.cell(row=3, column=8)
+        rgb = cell.fill.fgColor.rgb or ''
+        assert 'FFE699' in rgb
 
 
 class TestComparisonReport:

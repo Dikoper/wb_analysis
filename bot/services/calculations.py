@@ -95,9 +95,9 @@ def calc_refill_qty(avg_per_day: float, days: int, reserve_pct: float) -> int:
 # ── Хелперы для блока «Предложение WB» ────────────────────────────────────────
 
 AVAILABILITY_RU = {
-    'deficient': 'дефицитный',
-    'balanced':  'сбалансированный',
-    'actual':    'стабильный',
+    'deficient': 'дефицит',
+    'balanced':  'баланс',
+    'actual':    'ликвид',
     'nonActual': 'слабый',
     'nonLiquid': 'неликвид',
 }
