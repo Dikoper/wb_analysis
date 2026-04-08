@@ -297,29 +297,35 @@ class TestCalcSmartRefillQty:
         assert calc_smart_refill_qty(1.0, 30, 20) == 36
 
     def test_deficient_with_high_miss(self):
-        # base=1*30*1.2=36; f_avail=1.25; miss=11 → f_miss=1.20;
-        # trend=40 → clamp 15 → f_trend=1.15
-        # 36*1.25*1.20*1.15 = 62.1 → ceil = 63
-        assert calc_smart_refill_qty(1.0, 30, 20, 'deficient', 11, 40) == 63
+        # base=1*30*1.2=36; f_avail=1.25; miss=11 → f_miss=1.05;
+        # trend=40 → f_trend=1.40
+        # 36*1.25*1.05*1.40 = 66.15 → ceil = 67
+        assert calc_smart_refill_qty(1.0, 30, 20, 'deficient', 11, 40) == 67
 
     def test_trend_clamp_upper(self):
-        # balanced; miss=0; trend=500 → clamp 15 → f_trend=1.15
-        # base=1*30*1.0=30; 30*1.15 = 34.5 → ceil = 35
-        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, 500) == 35
+        # balanced; miss=0; trend=500 → clamp 50 → f_trend=1.50
+        # base=1*30*1.0=30; 30*1.50 = 45
+        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, 500) == 45
 
     def test_trend_clamp_lower(self):
-        # balanced; trend=-99 → clamp -15 → f_trend=0.85
-        # base=1*30*1.0=30; 30*0.85 = 25.5 → ceil = 26
-        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, -99) == 26
+        # balanced; trend=-99 → clamp -40 → f_trend=0.60
+        # base=1*30*1.0=30; 30*0.60 = 18
+        assert calc_smart_refill_qty(1.0, 30, 0, 'balanced', 0, -99) == 18
 
     def test_nonactual_penalty(self):
         # nonActual: f_avail=0.7; base=1*30*1=30 → 21
         assert calc_smart_refill_qty(1.0, 30, 0, 'nonActual', 0, 0) == 21
 
+    def test_strong_decline(self):
+        """Падающий товар (trend=-40%) получает заметно меньше базы."""
+        # base=1*30*1.2=36; balanced; miss=0; trend=-40 → f_trend=0.60
+        # 36*0.60 = 21.6 → ceil = 22
+        assert calc_smart_refill_qty(1.0, 30, 20, 'balanced', 0, -40) == 22
+
     def test_max_combo_under_2x(self):
-        """Максимальная комбинация должна быть не больше ~1.7× базовой."""
-        base = 100  # avg=100/(30*1)=3.333
-        result = calc_smart_refill_qty(100 / 30, 30, 0, 'deficient', 11, 15)
-        # 100 * 1.25 * 1.20 * 1.15 = 172.5 → 173
-        assert result <= 180, f'Expected ≤180, got {result}'
-        assert result >= 160, f'Expected ≥160 (still boosted), got {result}'
+        """Максимальная комбинация должна быть около ~2× базовой."""
+        # avg=100/30; base=100; deficient*miss>10*trend+50
+        # 100 * 1.25 * 1.05 * 1.50 = 196.875 → 197
+        result = calc_smart_refill_qty(100 / 30, 30, 0, 'deficient', 11, 50)
+        assert result <= 200, f'Expected ≤200, got {result}'
+        assert result >= 190, f'Expected ≥190 (strong boost), got {result}'

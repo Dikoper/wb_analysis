@@ -83,7 +83,7 @@ class TestSingleReport:
         assert ws.cell(row=2, column=10).value == 'Объём WB'
         assert ws.cell(row=2, column=11).value == 'Оборотность'
         assert ws.cell(row=2, column=13).value == 'Упущено заказов'
-        assert ws.cell(row=2, column=14).value == 'Распродать (WB)'
+        assert ws.cell(row=2, column=14).value == 'Срок рапродажи остатка (WB)'
         assert ws.cell(row=2, column=15).value == 'Тренд'
 
     def test_refill_sale_rate_header_has_comment(self, product_rows, warehouse_rows, tmp_path, monkeypatch):

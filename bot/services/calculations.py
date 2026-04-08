@@ -104,9 +104,10 @@ AVAILABILITY_RU = {
 
 # Мультипликатор объёма по классификации WB. Все пороги собраны здесь, чтобы
 # их можно было крутить в одном месте.
-# Пороги подобраны консервативно: типичная корректировка к базовой формуле
-# составляет ±20..+50%, максимальная комбинация (deficient + high miss + strong
-# uptrend) — не более ~1.7× базовой.
+# Главный сигнал — тренд (clamp [-40%..+50%]), затем availability, затем
+# простой склада (минимальный вклад: простой может быть от поставщика, а не
+# от спроса). Максимальная комбинация (deficient + high miss + strong uptrend)
+# — около ~2× базовой; падающий товар (nonActual + trend −40%) → ~0.4× базы.
 AVAILABILITY_MULT = {
     'nonLiquid': 0.0,   # не поставлять
     'nonActual': 0.7,
@@ -152,7 +153,7 @@ def calc_smart_refill_qty(
         base   = avg * target_days * (1 + reserve_pct/100)
         f_avail — мультипликатор по availability (см. AVAILABILITY_MULT)
         f_miss  — мультипликатор по простою склада (officeMissingTime.days)
-        f_trend — линейная корректировка по тренду продаж, clamp [-20%..+30%]
+        f_trend — линейная корректировка по тренду продаж, clamp [-40%..+50%]
     """
     if not avg or avg <= 0:
         return 0
@@ -162,15 +163,13 @@ def calc_smart_refill_qty(
         return 0  # неликвид — не поставлять
 
     if miss_days > 10:
-        f_miss = 1.20
-    elif miss_days > 5:
-        f_miss = 1.10
-    elif miss_days > 2:
         f_miss = 1.05
+    elif miss_days > 5:
+        f_miss = 1.03
     else:
         f_miss = 1.0
 
-    t = max(-15.0, min(15.0, trend_pct or 0.0)) / 100.0
+    t = max(-40.0, min(50.0, trend_pct or 0.0)) / 100.0
     f_trend = 1.0 + t
 
     base = avg * target_days * (1.0 + reserve_pct / 100.0)
