@@ -458,3 +458,221 @@ async def set_refill_reserve(message: Message, state: FSMContext, bot: Bot):
         reply_markup=calc_params_kb(**params)
     )
     logger.info(f"refill_reserve_pct: {pct}")
+
+
+# ── Распределение по складам ─────────────────────────────────────────────────
+
+import json
+from bot.db.warehouse import get_unique_warehouses
+from bot.services.calculations import parse_distribution_string
+from bot.config import MAX_REFILL_WAREHOUSES
+
+
+def _warehouse_distrib_kb():
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    from bot.keyboards import SettingsCB, NavCB
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text="✏ Изменить (строкой)",
+            callback_data=SettingsCB(action="wh_distrib_edit").pack(),
+        )],
+        [InlineKeyboardButton(
+            text="📋 Справочник складов",
+            callback_data=SettingsCB(action="wh_distrib_list").pack(),
+        )],
+        [InlineKeyboardButton(
+            text="← Назад",
+            callback_data=NavCB(target="settings").pack(),
+        )],
+    ])
+
+
+async def _format_distrib_text(distrib: list[dict]) -> str:
+    if not distrib:
+        return "Распределение не настроено."
+    lines = []
+    total_w = 0
+    for wc in distrib:
+        wid = wc.get('warehouse_id', '?')
+        name = wc.get('display_name', f'Склад {wid}')
+        w = wc.get('weight', 0)
+        cut = wc.get('cutoff_days', 0)
+        total_w += w
+        lines.append(f"  [{wid}] {name} — {w}% / {cut} д")
+    lines.append(f"\n  Σ весов: {total_w}%")
+    return "\n".join(lines)
+
+
+@router.callback_query(SettingsCB.filter(F.action == "warehouse_distrib"))
+async def show_warehouse_distrib(callback: CallbackQuery):
+    """Показывает текущее распределение по складам."""
+    raw = await get_setting('refill_warehouse_distribution', '[]')
+    try:
+        distrib = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        distrib = []
+    text = await _format_distrib_text(distrib)
+    await callback.message.edit_text(
+        f"🏭 <b>Распределение по складам</b>\n\n<pre>{text}</pre>",
+        reply_markup=_warehouse_distrib_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(SettingsCB.filter(F.action == "wh_distrib_edit"))
+async def wh_distrib_edit_start(callback: CallbackQuery, state: FSMContext):
+    """Начинает ввод строки распределения."""
+    from bot.keyboards import NavCB
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена",
+                              callback_data=SettingsCB(action="warehouse_distrib").pack())],
+    ])
+    await callback.message.edit_text(
+        "✏ <b>Введите строку распределения</b>\n\n"
+        f"Формат: <code>id-вес-отсечка, ...</code> (макс {MAX_REFILL_WAREHOUSES})\n"
+        "Пример: <code>507-25-3, 117501-20-3, 686-15-2</code>\n\n"
+        "id — ID склада WB (из справочника)\n"
+        "вес — % от общего объёма\n"
+        "отсечка — дни на пополнение склада",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await state.set_state(MenuStates.refill_distrib_enter)
+    await state.update_data(bot_msg_id=callback.message.message_id)
+    await callback.answer()
+
+
+@router.message(MenuStates.refill_distrib_enter)
+async def wh_distrib_enter_string(message: Message, state: FSMContext, bot: Bot):
+    """Парсит строку и показывает расшифровку."""
+    data = await state.get_data()
+    bot_msg_id = data.get('bot_msg_id')
+
+    async def edit_bot_msg(text, reply_markup=None):
+        try:
+            await bot.edit_message_text(
+                text, chat_id=message.chat.id, message_id=bot_msg_id,
+                reply_markup=reply_markup, parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    raw = message.text or ''
+    try:
+        parsed = parse_distribution_string(raw)
+    except ValueError as e:
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Отмена",
+                                  callback_data=SettingsCB(action="warehouse_distrib").pack())],
+        ])
+        await edit_bot_msg(f"❌ {e}\n\nПопробуйте ещё раз:", reply_markup=kb)
+        return
+
+    # Лукап имён
+    known = {w['id']: w for w in await get_unique_warehouses()}
+    distrib = []
+    lines = []
+    total_w = 0
+    for p in parsed:
+        wid = p['warehouse_id']
+        info = known.get(wid)
+        name = info['name'] if info else f'Неизвестный [{wid}]'
+        region = info.get('region', '') if info else ''
+        mark = '✅' if info else '⚠'
+        lines.append(f"  {mark} [{wid}] {name} — {p['weight']}% / {p['cutoff_days']} д")
+        total_w += p['weight']
+        distrib.append({
+            'warehouse_id': wid,
+            'display_name': name,
+            'region': region,
+            'weight': p['weight'],
+            'cutoff_days': p['cutoff_days'],
+        })
+    lines.append(f"\n  Σ весов: {total_w}%")
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Сохранить",
+                              callback_data=SettingsCB(action="wh_distrib_save").pack())],
+        [InlineKeyboardButton(text="❌ Отмена",
+                              callback_data=SettingsCB(action="warehouse_distrib").pack())],
+    ])
+    await state.update_data(pending_distrib=json.dumps(distrib, ensure_ascii=False))
+    await state.set_state(MenuStates.refill_distrib_confirm)
+    text = "\n".join(lines)
+    await edit_bot_msg(
+        f"🏭 <b>Распарсил {len(parsed)} складов:</b>\n<pre>{text}</pre>\n\n"
+        "Подтвердите сохранение:",
+        reply_markup=kb,
+    )
+
+
+@router.callback_query(SettingsCB.filter(F.action == "wh_distrib_save"))
+async def wh_distrib_save(callback: CallbackQuery, state: FSMContext):
+    """Сохраняет распределение."""
+    data = await state.get_data()
+    pending = data.get('pending_distrib', '[]')
+    await set_setting('refill_warehouse_distribution', pending)
+    await state.clear()
+
+    distrib = json.loads(pending)
+    text = await _format_distrib_text(distrib)
+    await callback.message.edit_text(
+        f"✅ Сохранено!\n\n🏭 <b>Распределение по складам</b>\n<pre>{text}</pre>",
+        reply_markup=_warehouse_distrib_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+    logger.info(f"warehouse_distribution saved: {len(distrib)} warehouses")
+
+
+@router.callback_query(SettingsCB.filter(F.action == "wh_distrib_list"))
+async def wh_distrib_list(callback: CallbackQuery):
+    """Показывает справочник складов."""
+    warehouses = await get_unique_warehouses()
+    if not warehouses:
+        await callback.answer("Нет данных по складам. Сначала сгенерируйте отчёт.", show_alert=True)
+        return
+
+    # Группировка по регионам
+    by_region = {}
+    for w in warehouses:
+        region = w.get('region') or 'Без региона'
+        name = w.get('name', '?')
+        # Фильтруем СЦ по умолчанию
+        if any(sc in name.upper() for sc in ('СЦ ', 'СЦ_', ' СЦ', 'СОРТИРОВОЧ')):
+            continue
+        by_region.setdefault(region, []).append(w)
+
+    lines = ["📋 Доступные склады:\n"]
+    for region in sorted(by_region.keys()):
+        lines.append(f"🏛 {region}:")
+        for w in sorted(by_region[region], key=lambda x: x.get('name', '')):
+            lines.append(f"  [{w['id']}] {w['name']}")
+        lines.append("")
+    lines.append("(СЦ скрыты)")
+
+    text = "\n".join(lines)
+    # Telegram limit: 4096 chars
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (список обрезан)"
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← Назад",
+                              callback_data=SettingsCB(action="warehouse_distrib").pack())],
+    ])
+    await callback.message.edit_text(
+        f"<pre>{text}</pre>",
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    await callback.answer()

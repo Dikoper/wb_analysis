@@ -15,5 +15,6 @@ from bot.db.products import (  # noqa: F401
 )
 from bot.db.warehouse import (  # noqa: F401
     save_warehouse_data, get_latest_warehouse_data, is_warehouse_data_fresh,
+    get_unique_warehouses,
 )
 from bot.db.audit import log_action  # noqa: F401

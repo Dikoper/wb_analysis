@@ -221,7 +221,9 @@ def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
     return [
         {
             'nm_id': int(row['nmId']),
+            'warehouse_id': int(row['warehouseId']) if row.get('warehouseId') else None,
             'warehouse_name': row['warehouseName'],
+            'region_name': row.get('regionName', ''),
             'quantity': int(row['quantity']),
             'in_way_from_client': int(row.get('inWayFromClient', 0)),
             'supplier_article': '',

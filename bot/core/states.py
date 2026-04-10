@@ -23,3 +23,5 @@ class MenuStates(StatesGroup):
     comparison_mode = State()
     compare_select_first = State()
     compare_select_second = State()
+    refill_distrib_enter = State()
+    refill_distrib_confirm = State()

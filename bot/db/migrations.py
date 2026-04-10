@@ -110,6 +110,16 @@ async def _migrate_cache_meta(db):
     ''')
 
 
+async def _migrate_warehouse_id_region(db):
+    """Добавляем warehouse_id (канонический ключ WB) и region_name в warehouse_stocks."""
+    await _migrate_add_column_safe(db, 'warehouse_stocks', 'warehouse_id', 'INTEGER')
+    await _migrate_add_column_safe(db, 'warehouse_stocks', 'region_name', 'TEXT')
+    await db.execute('''
+        CREATE INDEX IF NOT EXISTS idx_warehouse_stocks_wh_id
+            ON warehouse_stocks(store_id, warehouse_id)
+    ''')
+
+
 MIGRATIONS = [
     (1, _migrate_marketplace_name),
     (2, _migrate_obfuscate_tokens),
@@ -120,6 +130,7 @@ MIGRATIONS = [
     (7, _migrate_cache_meta),
     (8, _migrate_product_barcode),
     (9, _migrate_product_wb_metrics),
+    (10, _migrate_warehouse_id_region),
 ]
 
 

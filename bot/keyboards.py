@@ -129,6 +129,10 @@ def settings_kb(current_time: str = "09:00", is_subscribed: bool = False) -> Inl
             callback_data=SettingsCB(action="calc_params").pack()
         )],
         [InlineKeyboardButton(
+            text="🏭 Распределение по складам",
+            callback_data=SettingsCB(action="warehouse_distrib").pack()
+        )],
+        [InlineKeyboardButton(
             text="🏪 Управление магазинами",
             callback_data=SettingsCB(action="stores").pack()
         )],

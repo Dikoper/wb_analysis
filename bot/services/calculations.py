@@ -1,12 +1,17 @@
 """
-Бизнес-логика расчётов: группировка товаров, остатки, цены.
+Бизнес-логика расчётов: группировка товаров, остатки, цены, распределение по складам.
 """
 
 import math
+import re
+from typing import Any
 
 import pandas as pd
 
-from bot.config import THRESHOLD_A, THRESHOLD_B, THRESHOLD_C
+from bot.config import (
+    THRESHOLD_A, THRESHOLD_B, THRESHOLD_C,
+    REFILL_PERIOD_DAYS, REFILL_SAFETY_BUFFER, MAX_REFILL_WAREHOUSES,
+)
 
 
 def assign_group(avg_per_day: float, threshold_a: float = THRESHOLD_A, threshold_b: float = THRESHOLD_B, threshold_c: float = THRESHOLD_C) -> str:
@@ -294,3 +299,113 @@ def merge_orders_stocks(orders: pd.DataFrame, stocks: pd.DataFrame) -> pd.DataFr
 
     df = df.sort_values('stock_qty', ascending=False).reset_index(drop=True)
     return df
+
+
+# ── Распределение поставки по складам ─────────────────────────────────────────
+
+def compute_refill_distribution(
+    avg_day: float,
+    stock_by_wh_id: dict[int, int],
+    warehouse_config: list[dict],
+    n: int = REFILL_PERIOD_DAYS,
+    safety: float = REFILL_SAFETY_BUFFER,
+) -> dict[str, Any]:
+    """
+    Расчёт объёма поставки и распределения по складам.
+
+    Args:
+        avg_day: средние продажи товара в день (глобальные, не per склад).
+        stock_by_wh_id: {warehouse_id: quantity} — остатки на выбранных складах.
+        warehouse_config: [{warehouse_id, weight, cutoff_days, ...}].
+        n: срок расчёта в днях.
+        safety: буфер (+20% = 0.2).
+
+    Returns:
+        {
+            'total_volume': int,
+            'useful_stock': int,
+            'days_cover': float | None,
+            'ship_by_wh_id': {wh_id: int},
+            'is_empty': bool,
+        }
+    """
+    if not avg_day or avg_day <= 0:
+        return {
+            'total_volume': 0,
+            'useful_stock': sum(stock_by_wh_id.get(wc['warehouse_id'], 0) for wc in warehouse_config),
+            'days_cover': None,
+            'ship_by_wh_id': {wc['warehouse_id']: 0 for wc in warehouse_config},
+            'is_empty': True,
+        }
+
+    wh_ids = {wc['warehouse_id'] for wc in warehouse_config}
+    useful_stock = sum(stock_by_wh_id.get(wid, 0) for wid in wh_ids)
+    total_volume = round(avg_day * n * (1 + safety))
+    days_cover = useful_stock / avg_day
+
+    ship_by_wh_id = {}
+    for wc in warehouse_config:
+        wid = wc['warehouse_id']
+        weight = wc.get('weight', 0)
+        cutoff = wc.get('cutoff_days', 0)
+        weight_eff = weight * 2 if days_cover < cutoff else weight
+        raw = round(total_volume * weight_eff / 100)
+        stock_here = stock_by_wh_id.get(wid, 0)
+        ship_by_wh_id[wid] = max(0, raw - stock_here)
+
+    return {
+        'total_volume': total_volume,
+        'useful_stock': useful_stock,
+        'days_cover': days_cover,
+        'ship_by_wh_id': ship_by_wh_id,
+        'is_empty': False,
+    }
+
+
+def parse_distribution_string(raw: str) -> list[dict]:
+    """
+    Парсит строку формата 'id-weight-cutoff, id-weight-cutoff, ...'.
+
+    Пример: '507-25-3, 117501-20-3, 686-15-2'
+
+    Returns:
+        [{warehouse_id: int, weight: float, cutoff_days: int}, ...]
+
+    Raises:
+        ValueError: при невалидном формате или превышении лимита складов.
+    """
+    raw = raw.strip()
+    if not raw:
+        return []
+
+    pattern = re.compile(r'(\d+)\s*[-:]\s*(\d+(?:\.\d+)?)\s*[-:]\s*(\d+)')
+    matches = pattern.findall(raw)
+    if not matches:
+        raise ValueError(
+            "Неверный формат. Ожидается: id-вес-отсечка, ...\n"
+            "Пример: 507-25-3, 117501-20-3, 686-15-2"
+        )
+
+    if len(matches) > MAX_REFILL_WAREHOUSES:
+        raise ValueError(f"Максимум {MAX_REFILL_WAREHOUSES} складов, передано {len(matches)}")
+
+    result = []
+    seen_ids = set()
+    for wid_str, weight_str, cutoff_str in matches:
+        wid = int(wid_str)
+        if wid in seen_ids:
+            raise ValueError(f"Дублированный ID склада: {wid}")
+        seen_ids.add(wid)
+        weight = float(weight_str)
+        cutoff = int(cutoff_str)
+        if weight <= 0:
+            raise ValueError(f"Вес склада {wid} должен быть > 0")
+        if cutoff <= 0:
+            raise ValueError(f"Отсечка склада {wid} должна быть > 0")
+        result.append({
+            'warehouse_id': wid,
+            'weight': weight,
+            'cutoff_days': cutoff,
+        })
+
+    return result

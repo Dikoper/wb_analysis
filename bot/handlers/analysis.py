@@ -138,6 +138,14 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         # 2. Загрузка данных по складам (для детализации остатков)
         warehouse_rows = await fetch_or_cache_warehouse(store_id, store['token'])
 
+        # 2b. Загрузка настроек распределения по складам
+        import json
+        wh_dist_raw = await get_setting('refill_warehouse_distribution', '[]')
+        try:
+            warehouse_distribution = json.loads(wh_dist_raw)
+        except (json.JSONDecodeError, TypeError):
+            warehouse_distribution = []
+
         # 3. Генерация Excel из данных
         await progress_msg.edit_text(
             f"⏳ Генерирую отчёт для <b>{name}</b>...\n"
@@ -149,6 +157,7 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
             days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
             threshold_c=threshold_c, warehouse_rows=warehouse_rows,
             refill_days=refill_days, refill_reserve_pct=refill_reserve_pct,
+            warehouse_distribution=warehouse_distribution,
         )
         await save_report_history(store_id, report_path)
 

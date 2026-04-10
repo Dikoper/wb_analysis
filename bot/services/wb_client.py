@@ -503,14 +503,19 @@ def get_warehouse_stocks(token: str = None, nm_ids: list = None) -> pd.DataFrame
 
     if not all_rows:
         logger.warning("WB Warehouses вернул 0 строк")
-        return pd.DataFrame(columns=['nmId', 'warehouseName', 'quantity', 'inWayToClient', 'inWayFromClient'])
+        return pd.DataFrame(columns=[
+            'nmId', 'warehouseId', 'warehouseName', 'regionName',
+            'quantity', 'inWayToClient', 'inWayFromClient',
+        ])
 
     df = pd.DataFrame(all_rows)
 
     # Проверяем наличие колонок с безопасным fallback
-    for col in ['nmId', 'warehouseName', 'quantity', 'inWayToClient', 'inWayFromClient']:
+    for col in ['nmId', 'warehouseId', 'warehouseName', 'regionName',
+                'quantity', 'inWayToClient', 'inWayFromClient']:
         if col not in df.columns:
-            df[col] = 0 if col != 'warehouseName' else ''
+            df[col] = 0 if col not in ('warehouseName', 'regionName') else ''
 
     logger.info(f"WB Warehouses: {len(df)} строк загружено")
-    return df[['nmId', 'warehouseName', 'quantity', 'inWayToClient', 'inWayFromClient']]
+    return df[['nmId', 'warehouseId', 'warehouseName', 'regionName',
+               'quantity', 'inWayToClient', 'inWayFromClient']]

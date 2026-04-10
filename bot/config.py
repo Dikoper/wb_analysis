@@ -45,6 +45,11 @@ DEFAULT_REFILL_DAYS_2 = 30
 DEFAULT_REFILL_DAYS_3 = 60
 DEFAULT_REFILL_RESERVE_PCT = 20  # % надбавки к расчёту
 
+# Расчёт поставок по складам
+REFILL_PERIOD_DAYS = 30          # срок расчёта n (дней)
+REFILL_SAFETY_BUFFER = 0.2       # +20% запас на всплески спроса
+MAX_REFILL_WAREHOUSES = 8        # лимит складов в распределении
+
 # Кэш данных API (минуты) — если данные свежее, повторный запрос к API не делается
 DATA_CACHE_TTL = int(os.getenv('DATA_CACHE_TTL', '30'))
 
