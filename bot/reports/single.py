@@ -891,17 +891,7 @@ def generate_report_from_data(
         axis=1,
     )
 
-    # Лист 1: Товары на исходе (есть остаток И нужно повышение цены)
-    report = df[(df['stock_qty'] > 0) & (df['price_increase_pct'] > 0)].copy()
-    report = report.sort_values('days_remaining')
-    logger.info(f"Товаров на исходе: {len(report)}")
-
-    # Лист 2: Товары с нулевым остатком
-    out_of_stock = df[df['stock_qty'] == 0].copy()
-    out_of_stock = out_of_stock.sort_values(['product_group', 'avg_per_day'], ascending=[True, False])
-    logger.info(f"Товаров с нулевым остатком: {len(out_of_stock)}")
-
-    # Лист 3: Все товары
+    # Все товары
     all_products = df.copy()
     all_products = all_products.sort_values('avg_per_day', ascending=False)
     logger.info(f"Всего товаров: {len(all_products)}")
@@ -912,18 +902,18 @@ def generate_report_from_data(
     output_path = make_report_path(f'price_report{name_part}')
 
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        # ── Лист 1: На исходе ────────────────────────────────────────────
-        report_export = report[[
+        # ── Лист 1: Все товары ─────────────────────────────────────────
+        all_export = all_products[[
             'supplier_article', 'barcode', 'nm_id', 'product_group',
             'stock_qty_clean', 'in_way_from_client',
             'avg_per_day', 'days_remaining', 'price', 'wh_detail'
         ]].copy()
-        report_export.columns = [
+        all_export.columns = [
             'Артикул', 'Баркод', 'ID (WB)', 'Группа',
             'Остаток\n(чистый)', '_iwfc',
             'Продаж/день', 'Дней осталось', 'Цена ₽', 'Остатки по складам'
         ]
-        report_export.to_excel(writer, sheet_name='На исходе', index=False)
+        all_export.to_excel(writer, sheet_name='Все товары', index=False)
 
         # ── Лист «Поставки - расчёт» (все товары, распределение по складам) ─
         _build_refill_calc_sheet(
@@ -938,104 +928,32 @@ def generate_report_from_data(
             product_rows,
         )
 
-        # ── Лист 3: Нет на складе ───────────────────────────────────────
-        out_of_stock_export = out_of_stock[[
-            'supplier_article', 'barcode', 'nm_id', 'product_group', 'avg_per_day', 'price'
-        ]].copy()
-        out_of_stock_export.columns = ['Артикул', 'Баркод', 'ID (WB)', 'Группа', 'Продаж/день', 'Цена ₽']
-        out_of_stock_export.to_excel(writer, sheet_name='Нет на складе', index=False)
-
-        # ── Лист 4: Все товары ───────────────────────────────────────────
-        all_export = all_products[[
-            'supplier_article', 'barcode', 'nm_id', 'product_group',
-            'stock_qty_clean', 'in_way_from_client',
-            'avg_per_day', 'days_remaining', 'price', 'wh_detail'
-        ]].copy()
-        all_export.columns = [
-            'Артикул', 'Баркод', 'ID (WB)', 'Группа',
-            'Остаток\n(чистый)', '_iwfc',
-            'Продаж/день', 'Дней осталось', 'Цена ₽', 'Остатки по складам'
-        ]
-        all_export.to_excel(writer, sheet_name='Все товары', index=False)
-
-        # Итоги внизу листа 2
-        ws2 = writer.sheets['Нет на складе']
-        last_row = len(out_of_stock_export) + 3
-        ws2.cell(row=last_row, column=1, value=f'Товаров с нулевым остатком: {len(out_of_stock)}')
-        ws2.cell(row=last_row + 1, column=1, value=f'Упущенные продажи в день: {out_of_stock["avg_per_day"].sum():.2f} шт')
-
-        # ── Форматирование ───────────────────────────────────────────────
+        # ── Форматирование «Все товары» ────────────────────────────────
         logger.info("Форматирование Excel...")
 
-        ws1 = writer.sheets['На исходе']
-        ws3 = writer.sheets['Все товары']
+        ws = writer.sheets['Все товары']
 
-        # --- Лист 1: На исходе ---
         # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
-        apply_header_style(ws1, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 32})
-        apply_data_style(ws1, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
-        apply_hyperlinks(ws1, link_col=3)
-        apply_group_colors(ws1, group_col=4)
+        apply_header_style(ws, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 32})
+        apply_data_style(ws, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
+        apply_hyperlinks(ws, link_col=3)
+        apply_group_colors(ws, group_col=4)
 
         # Скрыть вспомогательную колонку _iwfc (col 6)
-        ws1.column_dimensions['F'].hidden = True
+        ws.column_dimensions['F'].hidden = True
 
-        # Прочерк для товаров без продаж (col 8)
-        _format_days_remaining(ws1, report, days_col=8)
+        # Пустые ячейки для товаров без продаж (col 8)
+        _format_days_remaining(ws, all_products, days_col=8)
 
-        # Комментарии к остаткам (col 5) и ценам (col 9)
-        _apply_stock_comments(ws1, report, stock_col=5, wh_index=wh_index)
-        _apply_price_comments(ws1, report, price_col=9)
-
-        # Стилизация колонки складов (col 10)
-        _style_wh_column(ws1, wh_col=10, num_rows=len(report_export))
-
-        # --- Лист 2: Нет на складе ---
-        # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Продаж/день, 6=Цена
-        apply_header_style(ws2, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 13})
-        apply_data_style(ws2, float_cols=[5, 6], int_cols=[])
-        apply_hyperlinks(ws2, link_col=3)
-        apply_group_colors(ws2, group_col=4)
-
-        # --- Лист 3: Все товары ---
-        # Колонки: 1=Артикул, 2=Баркод, 3=ID(WB), 4=Группа, 5=Остаток, 6=_iwfc, 7=Продаж/день, 8=Дней осталось, 9=Цена, 10=Остатки по складам
-        apply_header_style(ws3, {1: 24, 2: 18, 3: 15, 4: 11, 5: 15, 6: 0, 7: 15, 8: 17, 9: 13, 10: 32})
-        apply_data_style(ws3, float_cols=[7, 8, 9], int_cols=[5], row_height=None)
-        apply_hyperlinks(ws3, link_col=3)
-        apply_group_colors(ws3, group_col=4)
-
-        # Скрыть вспомогательную колонку _iwfc (col 6)
-        ws3.column_dimensions['F'].hidden = True
-
-        # Прочерк для товаров без продаж (col 8)
-        _format_days_remaining(ws3, all_products, days_col=8)
-
-        # Комментарии к остаткам (col 5)
-        _apply_stock_comments(ws3, all_products, stock_col=5, wh_index=wh_index)
+        # Комментарии к остаткам (col 5) и рекомендации повышения цен (col 9)
+        _apply_stock_comments(ws, all_products, stock_col=5, wh_index=wh_index)
+        _apply_price_comments(ws, all_products, price_col=9)
 
         # Ссылки на карточку товара по артикулу (col 1 → nmId из col 3)
-        _apply_product_links(ws3, article_col=1, nm_id_col=3)
+        _apply_product_links(ws, article_col=1, nm_id_col=3)
 
         # Стилизация колонки складов (col 10)
-        _style_wh_column(ws3, wh_col=10, num_rows=len(all_export))
-
-        # ── Аннотации под таблицами ──────────────────────────────────────
-        ws1_last = len(report_export) + 4
-        ws1.cell(row=ws1_last, column=1, value='— Группы товаров (продаж/день) —')
-        ws1.cell(row=ws1_last + 1, column=1, value=f'A: ходовые (≥{threshold_a})')
-        ws1.cell(row=ws1_last + 2, column=1, value=f'B: средние (≥{threshold_b})')
-        ws1.cell(row=ws1_last + 3, column=1, value=f'C: редкие (≥{threshold_c})')
-        ws1.cell(row=ws1_last + 4, column=1, value=f'D: почти не продаются (<{threshold_c})')
-        ws1.cell(row=ws1_last + 5, column=1, value=f'Порог повышения цены: ≤{days_threshold} дней остатка')
-        apply_legend_style(ws1, ws1_last, has_threshold_row=True)
-
-        ws2_last = last_row + 4
-        ws2.cell(row=ws2_last, column=1, value='— Группы товаров (продаж/день) —')
-        ws2.cell(row=ws2_last + 1, column=1, value=f'A: ходовые (≥{threshold_a})')
-        ws2.cell(row=ws2_last + 2, column=1, value=f'B: средние (≥{threshold_b})')
-        ws2.cell(row=ws2_last + 3, column=1, value=f'C: редкие (≥{threshold_c})')
-        ws2.cell(row=ws2_last + 4, column=1, value=f'D: почти не продаются (<{threshold_c})')
-        apply_legend_style(ws2, ws2_last, has_threshold_row=False)
+        _style_wh_column(ws, wh_col=10, num_rows=len(all_export))
 
     logger.info(f"✓ Отчёт сохранён: {output_path}")
     logger.info("=== Генерация завершена ===")
