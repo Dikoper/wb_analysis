@@ -90,12 +90,11 @@ def _apply_price_comments(ws, df: pd.DataFrame, price_col: int):
 
 
 def _format_days_remaining(ws, df: pd.DataFrame, days_col: int):
-    """Заменяет пустые ячейки 'Дней осталось' на '—' для товаров без продаж."""
+    """Очищает ячейки 'Дней осталось' для товаров без продаж (пустая ячейка вместо числа)."""
     for i, (_, row) in enumerate(df.iterrows()):
         if row.get('avg_per_day', 0) == 0:
             cell = ws.cell(row=i + 2, column=days_col)
-            cell.value = "—"
-            cell.number_format = "@"
+            cell.value = None
 
 
 def _apply_product_links(ws, article_col: int, nm_id_col: int):
@@ -356,7 +355,7 @@ def _build_refill_calc_sheet(
             volume = round(avg * n * safety_mult)
             days_cover = useful_stock / avg
         else:
-            volume = '\u2014'
+            volume = None
             days_cover = 9999
 
         vol_cell = ws.cell(row=row_num, column=COL_VOL, value=volume)
@@ -394,9 +393,9 @@ def _build_refill_calc_sheet(
                 cell_wh.value = ''
                 continue
 
-            # =IF(OR(C5="—",D$2=""),"—",MAX(0,ROUND(C5*IF(M5<D$3,D$2*2,D$2)/100,0)-N5))
+            # =IF(OR(C5="",D$2=""),"",MAX(0,ROUND(C5*IF(M5<D$3,D$2*2,D$2)/100,0)-N5))
             cell_wh.value = (
-                f'=IF(OR({L_VOL}{row_num}="\u2014",{L_wh}${ROW_PARAM_WEIGHT}=""),"\u2014",'
+                f'=IF(OR({L_VOL}{row_num}="",{L_wh}${ROW_PARAM_WEIGHT}=""),"",'
                 f'MAX(0,ROUND({L_VOL}{row_num}'
                 f'*IF({L_DCOVER}{row_num}<{L_wh}${ROW_PARAM_CUTOFF},'
                 f'{L_wh}${ROW_PARAM_WEIGHT}*2,{L_wh}${ROW_PARAM_WEIGHT})/100,0)'
@@ -498,7 +497,7 @@ def _build_wb_suggestion_sheet(
         c.border = data_border
 
         # C: Объём WB
-        c = ws.cell(row=row_num, column=3, value=smart_qty if avg > 0 else '\u2014')
+        c = ws.cell(row=row_num, column=3, value=smart_qty if avg > 0 else None)
         c.font = data_font
         c.alignment = CENTER
         c.number_format = '0'
@@ -519,7 +518,7 @@ def _build_wb_suggestion_sheet(
         # F: Упущено заказов
         lost_rounded = round(lost)
         c = ws.cell(row=row_num, column=6,
-                    value=lost_rounded if lost_rounded > 0 else '\u2014')
+                    value=lost_rounded if lost_rounded > 0 else None)
         c.font = data_font
         c.alignment = CENTER
         c.border = data_border

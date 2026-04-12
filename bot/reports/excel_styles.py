@@ -297,7 +297,7 @@ def write_store_row(
     avg = store_data.get('avg_per_day', 0)
     dr = store_data.get('days_remaining')
     if avg == 0:
-        c = ws.cell(row=row_num, column=5, value="—")
+        c = ws.cell(row=row_num, column=5, value=None)
     else:
         c = ws.cell(row=row_num, column=5, value=dr)
         if dr is not None:
