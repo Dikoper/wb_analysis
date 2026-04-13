@@ -17,7 +17,7 @@ from bot.keyboards import (
 from bot.core.states import MenuStates
 from bot.db import (
     get_stores, get_store, get_setting,
-    save_report_history, log_action,
+    save_report_history, log_action, get_calc_params,
 )
 from bot.services.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
 from bot.reports.comparison import generate_comparison_report
@@ -127,10 +127,11 @@ async def select_second(callback: CallbackQuery, callback_data: CompareCB, state
     await state.clear()
 
     try:
-        days_threshold = int(await get_setting('calc_days_threshold', '7'))
-        threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
-        threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
-        threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
+        params = await get_calc_params()
+        days_threshold = params.days_threshold
+        threshold_a = params.threshold_a
+        threshold_b = params.threshold_b
+        threshold_c = params.threshold_c
 
         data1, data2 = await asyncio.wait_for(
             asyncio.gather(
@@ -228,10 +229,11 @@ async def start_summary_report(callback: CallbackQuery, state: FSMContext):
     await state.clear()
 
     try:
-        days_threshold = int(await get_setting('calc_days_threshold', '7'))
-        threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
-        threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
-        threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
+        params = await get_calc_params()
+        days_threshold = params.days_threshold
+        threshold_a = params.threshold_a
+        threshold_b = params.threshold_b
+        threshold_c = params.threshold_c
 
         # Параллельная загрузка данных всех магазинов
         product_tasks = []

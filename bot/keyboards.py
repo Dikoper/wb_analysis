@@ -5,6 +5,8 @@ Inline-клавиатуры для меню бота.
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters.callback_data import CallbackData
 
+from bot.utils.stores import store_display_name  # noqa: F401 — re-exported below
+
 
 # === Callback Data ===
 
@@ -36,15 +38,6 @@ class CompareModeCB(CallbackData, prefix="cmpmode"):
 
 class SubscribeCB(CallbackData, prefix="sub"):
     action: str  # "toggle"
-
-
-# === Helpers ===
-
-def store_display_name(store: dict) -> str:
-    """'Бренд (ИП)' если задано marketplace_name, иначе просто name."""
-    legal = store.get('name') or f"Магазин #{store['id']}"
-    brand = store.get('marketplace_name')
-    return f"{brand} ({legal})" if brand else legal
 
 
 # === Keyboard Builders ===

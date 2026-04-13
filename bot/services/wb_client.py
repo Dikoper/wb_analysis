@@ -11,7 +11,6 @@ from http.client import IncompleteRead
 from urllib.error import URLError
 
 import pandas as pd
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +32,11 @@ class WBApiError(Exception):
     pass
 
 
-def get_token() -> str:
-    """Возвращает токен WB API из переменной окружения WB_TOKEN."""
-    token = os.getenv('WB_TOKEN')
-    if not token:
-        raise ValueError("WB_TOKEN не задан в переменных окружения")
-    return token
+def _dh(d) -> float:
+    """Конвертирует {days, hours} в дробные дни."""
+    if not isinstance(d, dict):
+        return 0.0
+    return (d.get('days') or 0) + (d.get('hours') or 0) / 24.0
 
 
 def fetch_with_retry(url: str, token: str, retries: int = 3, delay: int = 5) -> list:
@@ -174,7 +172,7 @@ def post_with_retry(url: str, token: str, body: dict, retries: int = 3, delay: i
                 raise
 
 
-def get_catalog(token: str = None) -> dict:
+def get_catalog(token: str) -> dict:
     """
     Получает полный каталог товаров через Content API (курсорная пагинация).
 
@@ -186,9 +184,6 @@ def get_catalog(token: str = None) -> dict:
     Returns:
         dict {nmId: {'supplierArticle': str, 'subject': str, 'category': str}}
     """
-    if token is None:
-        token = get_token()
-
     catalog = {}
     limit = 100
     cursor = {"limit": limit}
@@ -274,9 +269,6 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict, dict
             articles: dict {nmID: vendorCode} — артикулы продавца
             barcodes: dict {nmID: str} — баркоды (все SKU через ", ")
     """
-    if token is None:
-        token = get_token()
-
     nm_set = set(nm_ids) if nm_ids else None
     prices = {}
     articles = {}
@@ -322,7 +314,7 @@ def get_prices(nm_ids: list = None, token: str = None) -> tuple[dict, dict, dict
     return prices, articles, barcodes
 
 
-def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_stocks_report(token: str, period_days: int = 14) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Загружает данные через Seller Analytics Stocks Report.
 
@@ -341,9 +333,6 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
         WBApiError: при ошибках API
         WBTokenError: при невалидном токене
     """
-    if token is None:
-        token = get_token()
-
     date_to = datetime.now()
     date_from = date_to - timedelta(days=period_days)
 
@@ -411,11 +400,6 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
         })
 
         # ── Доп. метрики WB для умного предложения ──────────────────────
-        def _dh(d):
-            """{days, hours} → дробные дни."""
-            if not isinstance(d, dict):
-                return 0.0
-            return (d.get('days') or 0) + (d.get('hours') or 0) / 24.0
 
         # Тренд: первая и последняя точка avgOrdersByMonth (на самом деле недельные)
         by_month = metrics.get('avgOrdersByMonth') or []
@@ -448,7 +432,7 @@ def get_stocks_report(token: str = None, period_days: int = 14) -> tuple[pd.Data
     return stocks_df, orders_df
 
 
-def get_warehouse_stocks(token: str = None, nm_ids: list = None) -> pd.DataFrame:
+def get_warehouse_stocks(token: str, nm_ids: list = None) -> pd.DataFrame:
     """
     Загружает остатки по складам через современный wb-warehouses API.
 
@@ -464,9 +448,6 @@ def get_warehouse_stocks(token: str = None, nm_ids: list = None) -> pd.DataFrame
     Returns:
         DataFrame с колонками: nmId, warehouseName, quantity, inWayToClient, inWayFromClient
     """
-    if token is None:
-        token = get_token()
-
     all_rows = []
     offset = 0
     page_limit = 1000

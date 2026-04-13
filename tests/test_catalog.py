@@ -23,12 +23,11 @@ class TestGetPricesFix:
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_zero_discounted_price(self, mock_fetch):
-        """Товар с discountedPrice=0 попадает в результат."""
         mock_fetch.return_value = self._mock_prices_response([
             {'nmID': 1, 'vendorCode': 'ART-1', 'sizes': [{'discountedPrice': 0}]},
             {'nmID': 2, 'vendorCode': 'ART-2', 'sizes': [{'discountedPrice': 500}]},
         ])
-        prices, articles = get_prices(token='test')
+        prices, articles, _barcodes = get_prices(token='test')
         assert 1 in prices
         assert prices[1] == 0
         assert prices[2] == 500
@@ -36,29 +35,26 @@ class TestGetPricesFix:
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_empty_sizes(self, mock_fetch):
-        """Товар без размеров (sizes=[]) попадает в результат с ценой 0."""
         mock_fetch.return_value = self._mock_prices_response([
             {'nmID': 1, 'sizes': []},
             {'nmID': 2, 'sizes': [{'discountedPrice': 100}]},
         ])
-        prices, articles = get_prices(token='test')
+        prices, _articles, _barcodes = get_prices(token='test')
         assert 1 in prices
         assert prices[1] == 0
         assert prices[2] == 100
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_none_discounted_price(self, mock_fetch):
-        """Товар с discountedPrice=None — цена 0, но товар не теряется."""
         mock_fetch.return_value = self._mock_prices_response([
             {'nmID': 1, 'sizes': [{'discountedPrice': None}]},
         ])
-        prices, articles = get_prices(token='test')
+        prices, _articles, _barcodes = get_prices(token='test')
         assert 1 in prices
         assert prices[1] == 0
 
     @patch('bot.services.wb_client.fetch_with_retry')
     def test_mixed_sizes(self, mock_fetch):
-        """Товар с несколькими размерами — берётся минимальная цена."""
         mock_fetch.return_value = self._mock_prices_response([
             {'nmID': 1, 'sizes': [
                 {'discountedPrice': 300},
@@ -66,7 +62,7 @@ class TestGetPricesFix:
                 {'discountedPrice': 400},
             ]},
         ])
-        prices, articles = get_prices(token='test')
+        prices, _articles, _barcodes = get_prices(token='test')
         assert prices[1] == 200
 
 
@@ -140,22 +136,23 @@ class TestGetCatalog:
 class TestFetchStoreDataRecovery:
     """Товар только в каталоге (нет в stocks/orders) → попадает в результат."""
 
-    @patch('bot.services.data_service.get_catalog')
+    @patch('bot.services.data_service.get_warehouse_stocks')
+    @patch('bot.services.data_service.get_stocks_report')
     @patch('bot.services.data_service.get_prices')
-    @patch('bot.services.data_service.get_orders_multi')
-    @patch('bot.services.data_service.get_stocks')
-    @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
-    @patch('bot.services.data_service.get_stocks_report', side_effect=Exception("fallback"))
+    @patch('bot.services.data_service.get_catalog')
     def test_product_only_in_catalog_recovered(
-        self, mock_sr, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_catalog, mock_prices, mock_stocks_report, mock_wh
     ):
-        """nm_id=500 есть только в каталоге → появляется в результате с метаданными."""
         mock_catalog.return_value = {
-            100: {'supplierArticle': 'ART-1', 'subject': 'Футболка', 'category': 'Одежда'},
-            500: {'supplierArticle': 'ART-5', 'subject': 'Шарф', 'category': 'Аксессуары'},
+            100: {'supplierArticle': 'ART-1', 'subject': 'Футболка', 'category': 'Одежда', 'barcode': ''},
+            500: {'supplierArticle': 'ART-5', 'subject': 'Шарф', 'category': 'Аксессуары', 'barcode': ''},
         }
-        mock_prices.return_value = ({100: 1500, 500: 800}, {100: 'ART-1', 500: 'ART-5'})
-        mock_stocks.return_value = pd.DataFrame({
+        mock_prices.return_value = (
+            {100: 1500, 500: 800},
+            {100: 'ART-1', 500: 'ART-5'},
+            {},
+        )
+        stocks_df = pd.DataFrame({
             'nmId': [100],
             'stock_qty': [50],
             'in_way_from_client': [0],
@@ -164,19 +161,26 @@ class TestFetchStoreDataRecovery:
             'subject': ['Футболка'],
             'category': ['Одежда'],
         })
-        mock_orders.return_value = pd.DataFrame({
+        orders_df = pd.DataFrame({
             'nmId': [100],
             'supplierArticle': ['ART-1'],
             'subject': ['Футболка'],
             'category': ['Одежда'],
             'orders_count_7d': [10],
             'orders_count_14d': [20],
+            'avg_per_day': [1.43],
+            'availability': [''],
+            'sale_rate_days': [0.0],
+            'office_missing_days': [0.0],
+            'lost_orders': [0],
+            'trend_pct': [0.0],
         })
+        mock_stocks_report.return_value = (stocks_df, orders_df)
+        mock_wh.return_value = pd.DataFrame()
 
         result = fetch_store_data(token='test')
         nm_ids = {r['nm_id'] for r in result}
 
-        # nm_id=500 восстановлен из каталога
         assert 500 in nm_ids
         recovered = next(r for r in result if r['nm_id'] == 500)
         assert recovered['supplier_article'] == 'ART-5'
@@ -185,19 +189,20 @@ class TestFetchStoreDataRecovery:
         assert recovered['avg_per_day'] == 0
         assert recovered['price'] == 800
 
-    @patch('bot.services.data_service.get_catalog')
+    @patch('bot.services.data_service.get_warehouse_stocks')
+    @patch('bot.services.data_service.get_stocks_report')
     @patch('bot.services.data_service.get_prices')
-    @patch('bot.services.data_service.get_orders_multi')
-    @patch('bot.services.data_service.get_stocks')
-    @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
-    @patch('bot.services.data_service.get_stocks_report', side_effect=Exception("fallback"))
+    @patch('bot.services.data_service.get_catalog')
     def test_catalog_fallback_on_error(
-        self, mock_sr, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_catalog, mock_prices, mock_stocks_report, mock_wh
     ):
-        """При ошибке Content API пайплайн работает через prices_map."""
         mock_catalog.side_effect = Exception("Content API timeout")
-        mock_prices.return_value = ({100: 1500, 600: 900}, {100: 'ART-1', 600: 'ART-6'})
-        mock_stocks.return_value = pd.DataFrame({
+        mock_prices.return_value = (
+            {100: 1500, 600: 900},
+            {100: 'ART-1', 600: 'ART-6'},
+            {},
+        )
+        stocks_df = pd.DataFrame({
             'nmId': [100],
             'stock_qty': [50],
             'in_way_from_client': [0],
@@ -206,33 +211,32 @@ class TestFetchStoreDataRecovery:
             'subject': ['Футболка'],
             'category': ['Одежда'],
         })
-        mock_orders.return_value = pd.DataFrame(
+        orders_df = pd.DataFrame(
             columns=['nmId', 'supplierArticle', 'subject', 'category',
-                     'orders_count_7d', 'orders_count_14d']
+                     'orders_count_7d', 'orders_count_14d', 'avg_per_day',
+                     'availability', 'sale_rate_days', 'office_missing_days',
+                     'lost_orders', 'trend_pct']
         )
+        mock_stocks_report.return_value = (stocks_df, orders_df)
+        mock_wh.return_value = pd.DataFrame()
 
         result = fetch_store_data(token='test')
         nm_ids = {r['nm_id'] for r in result}
 
-        # nm_id=600 восстановлен из prices_map (fallback)
         assert 600 in nm_ids
 
-    @patch('bot.services.data_service.get_catalog')
+    @patch('bot.services.data_service.get_warehouse_stocks')
+    @patch('bot.services.data_service.get_stocks_report')
     @patch('bot.services.data_service.get_prices')
-    @patch('bot.services.data_service.get_orders_multi')
-    @patch('bot.services.data_service.get_stocks')
-    @patch('bot.services.data_service._fetch_raw_stocks', return_value=pd.DataFrame())
-    @patch('bot.services.data_service.get_stocks_report', side_effect=Exception("fallback"))
+    @patch('bot.services.data_service.get_catalog')
     def test_metadata_enrichment_from_catalog(
-        self, mock_sr, mock_raw, mock_stocks, mock_orders, mock_prices, mock_catalog
+        self, mock_catalog, mock_prices, mock_stocks_report, mock_wh
     ):
-        """Товар в stocks без метаданных — обогащается из каталога."""
         mock_catalog.return_value = {
-            100: {'supplierArticle': 'ART-1', 'subject': 'Футболка', 'category': 'Одежда'},
+            100: {'supplierArticle': 'ART-1', 'subject': 'Футболка', 'category': 'Одежда', 'barcode': ''},
         }
-        mock_prices.return_value = ({100: 1500}, {100: 'ART-1'})
-        # stocks без метаданных
-        mock_stocks.return_value = pd.DataFrame({
+        mock_prices.return_value = ({100: 1500}, {100: 'ART-1'}, {})
+        stocks_df = pd.DataFrame({
             'nmId': [100],
             'stock_qty': [50],
             'in_way_from_client': [0],
@@ -241,10 +245,14 @@ class TestFetchStoreDataRecovery:
             'subject': [''],
             'category': [''],
         })
-        mock_orders.return_value = pd.DataFrame(
+        orders_df = pd.DataFrame(
             columns=['nmId', 'supplierArticle', 'subject', 'category',
-                     'orders_count_7d', 'orders_count_14d']
+                     'orders_count_7d', 'orders_count_14d', 'avg_per_day',
+                     'availability', 'sale_rate_days', 'office_missing_days',
+                     'lost_orders', 'trend_pct']
         )
+        mock_stocks_report.return_value = (stocks_df, orders_df)
+        mock_wh.return_value = pd.DataFrame()
 
         result = fetch_store_data(token='test')
         item = next(r for r in result if r['nm_id'] == 100)

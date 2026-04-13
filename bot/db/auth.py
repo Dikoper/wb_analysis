@@ -5,7 +5,7 @@
 import time
 import aiosqlite
 
-from bot.db.connection import DB_PATH
+from bot.db.connection import get_connection
 
 _authorized_cache: set[int] = set()
 _auth_cache_loaded = False
@@ -20,9 +20,9 @@ async def _ensure_auth_cache():
     if _auth_cache_loaded and (now - _auth_cache_ts < _AUTH_CACHE_TTL):
         return
     global _authorized_cache
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute('SELECT chat_id FROM authorized_users')
-        rows = await cursor.fetchall()
+    db = await get_connection()
+    cursor = await db.execute('SELECT chat_id FROM authorized_users')
+    rows = await cursor.fetchall()
     _authorized_cache = {row[0] for row in rows}
     _auth_cache_loaded = True
     _auth_cache_ts = now
@@ -36,10 +36,10 @@ async def is_authorized(chat_id: int) -> bool:
 
 async def authorize_user(chat_id: int):
     """Добавляет пользователя в список авторизованных + обновляет кэш."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            'INSERT OR IGNORE INTO authorized_users (chat_id) VALUES (?)',
-            (chat_id,)
-        )
-        await db.commit()
+    db = await get_connection()
+    await db.execute(
+        'INSERT OR IGNORE INTO authorized_users (chat_id) VALUES (?)',
+        (chat_id,)
+    )
+    await db.commit()
     _authorized_cache.add(chat_id)

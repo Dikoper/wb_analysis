@@ -2,8 +2,9 @@
 Настройки: время отчётов, параметры расчёта.
 """
 
-import re
+import json
 import logging
+import re
 
 from aiogram import Router, F, Bot
 from aiogram.types import CallbackQuery, Message
@@ -18,10 +19,14 @@ from bot.config import (
     THRESHOLD_B as DEFAULT_THRESHOLD_B,
     THRESHOLD_C as DEFAULT_THRESHOLD_C,
     DEFAULT_REFILL_RESERVE_PCT,
+    REFILL_PERIOD_DAYS as DEFAULT_REFILL_PERIOD_DAYS,
+    MAX_REFILL_WAREHOUSES,
 )
-from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber
-from bot.services.scheduler import reschedule_daily_reports
+from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber, get_calc_params
+from bot.services.scheduler import get_scheduler
 from bot.utils.messages import edit_or_send
+from bot.db.warehouse import get_unique_warehouses
+from bot.services.calculations import parse_distribution_string
 
 logger = logging.getLogger(__name__)
 
@@ -40,25 +45,19 @@ async def _send_settings(callback: CallbackQuery):
     await callback.answer()
 
 
-async def _get_calc_params() -> dict:
-    """Читает все параметры расчёта из настроек."""
-    from bot.config import REFILL_PERIOD_DAYS as DEFAULT_REFILL_PERIOD_DAYS
-    return {
-        'days_n': int(await get_setting('calc_days_threshold', str(DEFAULT_DAYS_N))),
-        'threshold_a': float(await get_setting('calc_threshold_a', str(DEFAULT_THRESHOLD_A))),
-        'threshold_b': float(await get_setting('calc_threshold_b', str(DEFAULT_THRESHOLD_B))),
-        'threshold_c': float(await get_setting('calc_threshold_c', str(DEFAULT_THRESHOLD_C))),
-        'refill_reserve_pct': int(await get_setting('refill_reserve_pct', str(DEFAULT_REFILL_RESERVE_PCT))),
-        'refill_period_days': int(await get_setting('refill_period_days', str(DEFAULT_REFILL_PERIOD_DAYS))),
-    }
-
-
 async def _send_calc_params(callback: CallbackQuery):
     """Показывает подменю параметров расчёта."""
-    params = await _get_calc_params()
+    params = await get_calc_params()
     await callback.message.edit_text(
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(**params),
+        reply_markup=calc_params_kb(
+            days_n=params.days_threshold,
+            threshold_a=params.threshold_a,
+            threshold_b=params.threshold_b,
+            threshold_c=params.threshold_c,
+            refill_reserve_pct=params.refill_reserve_pct,
+            refill_period_days=params.refill_period_days,
+        ),
         parse_mode="HTML"
     )
     await callback.answer()
@@ -150,7 +149,9 @@ async def set_report_time(message: Message, state: FSMContext, bot: Bot):
         return
 
     await set_setting('report_time', text)
-    reschedule_daily_reports(text)
+    scheduler = get_scheduler()
+    if scheduler:
+        scheduler.reschedule(text)
     await state.clear()
 
     await edit_bot_msg(
@@ -221,11 +222,18 @@ async def set_days_threshold(message: Message, state: FSMContext, bot: Bot):
     await set_setting('calc_days_threshold', str(n))
     await state.clear()
 
-    params = await _get_calc_params()
+    params = await get_calc_params()
     await edit_bot_msg(
         f"✅ Порог дней изменён на <b>{n}</b>\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(**params)
+        reply_markup=calc_params_kb(
+            days_n=params.days_threshold,
+            threshold_a=params.threshold_a,
+            threshold_b=params.threshold_b,
+            threshold_c=params.threshold_c,
+            refill_reserve_pct=params.refill_reserve_pct,
+            refill_period_days=params.refill_period_days,
+        )
     )
     logger.info(f"calc_days_threshold изменён на {n}")
 
@@ -308,11 +316,18 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
     await set_setting('calc_threshold_c', str(c))
     await state.clear()
 
-    params = await _get_calc_params()
+    params = await get_calc_params()
     await edit_bot_msg(
-        f"✅ Пороги обновлены: A≥{a} · B≥{b} · C≥{c} · D<;{c}\n\n"
+        f"✅ Пороги обновлены: A≥{a} · B≥{b} · C≥{c} · D<{c}\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(**params)
+        reply_markup=calc_params_kb(
+            days_n=params.days_threshold,
+            threshold_a=params.threshold_a,
+            threshold_b=params.threshold_b,
+            threshold_c=params.threshold_c,
+            refill_reserve_pct=params.refill_reserve_pct,
+            refill_period_days=params.refill_period_days,
+        )
     )
     logger.info(f"calc_threshold: A={a}, B={b}, C={c}")
 
@@ -367,11 +382,18 @@ async def set_refill_reserve(message: Message, state: FSMContext, bot: Bot):
     await set_setting('refill_reserve_pct', str(pct))
     await state.clear()
 
-    params = await _get_calc_params()
+    params = await get_calc_params()
     await edit_bot_msg(
         f"✅ Запас пополнения: <b>{pct}%</b>\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(**params)
+        reply_markup=calc_params_kb(
+            days_n=params.days_threshold,
+            threshold_a=params.threshold_a,
+            threshold_b=params.threshold_b,
+            threshold_c=params.threshold_c,
+            refill_reserve_pct=params.refill_reserve_pct,
+            refill_period_days=params.refill_period_days,
+        )
     )
     logger.info(f"refill_reserve_pct: {pct}")
 
@@ -379,7 +401,6 @@ async def set_refill_reserve(message: Message, state: FSMContext, bot: Bot):
 @router.callback_query(SettingsCB.filter(F.action == "refill_period"))
 async def ask_refill_period(callback: CallbackQuery, state: FSMContext):
     """Запрос срока расчёта объёма поставки (дни)."""
-    from bot.config import REFILL_PERIOD_DAYS as DEFAULT_REFILL_PERIOD_DAYS
     current = int(await get_setting('refill_period_days', str(DEFAULT_REFILL_PERIOD_DAYS)))
     await callback.message.edit_text(
         "📆 <b>Срок расчёта объёма поставки</b>\n\n"
@@ -426,21 +447,23 @@ async def set_refill_period(message: Message, state: FSMContext, bot: Bot):
     await set_setting('refill_period_days', str(n))
     await state.clear()
 
-    params = await _get_calc_params()
+    params = await get_calc_params()
     await edit_bot_msg(
         f"✅ Срок расчёта объёма: <b>{n} дн</b>\n\n"
         "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(**params)
+        reply_markup=calc_params_kb(
+            days_n=params.days_threshold,
+            threshold_a=params.threshold_a,
+            threshold_b=params.threshold_b,
+            threshold_c=params.threshold_c,
+            refill_reserve_pct=params.refill_reserve_pct,
+            refill_period_days=params.refill_period_days,
+        )
     )
     logger.info(f"refill_period_days: {n}")
 
 
 # ── Распределение по складам ─────────────────────────────────────────────────
-
-import json
-from bot.db.warehouse import get_unique_warehouses
-from bot.services.calculations import parse_distribution_string
-from bot.config import MAX_REFILL_WAREHOUSES
 
 
 def _warehouse_distrib_kb():

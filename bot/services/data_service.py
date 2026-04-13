@@ -25,24 +25,8 @@ from bot.db import (
 logger = logging.getLogger(__name__)
 
 
-# ── Загрузка данных из API ────────────────────────────────────────────────────
-
-def fetch_store_data(
-    token: str = None,
-    days_threshold: int = 7,
-    threshold_a: float = THRESHOLD_A,
-    threshold_b: float = THRESHOLD_B,
-    threshold_c: float = THRESHOLD_C,
-) -> list[dict]:
-    """
-    Загружает данные из WB API, рассчитывает метрики.
-
-    Returns:
-        Список словарей — по одному на каждый товар (nm_id).
-    """
-    logger.info("=== Загрузка данных из WB API ===")
-
-    # === 1. Каталог — полный список товаров через Content API ===
+def _fetch_raw_data(token: str):
+    """Загружает сырые данные из WB API: каталог, цены, стоки."""
     catalog_ok = False
     try:
         logger.info("Загрузка каталога (Content API)...")
@@ -51,9 +35,8 @@ def fetch_store_data(
         logger.info(f"✓ Каталог: {len(catalog)} карточек")
     except Exception as e:
         logger.warning(f"Content API недоступен: {e}. Fallback на prices_map.")
-        catalog = None  # заполним после загрузки цен
+        catalog = None
 
-    # === 2. Цены ===
     try:
         logger.info("Загрузка цен...")
         prices_map, prices_articles, prices_barcodes = get_prices(nm_ids=None, token=token)
@@ -64,40 +47,18 @@ def fetch_store_data(
         prices_articles = {}
         prices_barcodes = {}
 
-    # Fallback: если каталог не загрузился, используем prices_map как источник ID
     if catalog is None:
         catalog = {nm: {} for nm in prices_map}
 
-    # === 3-4. Остатки + Заказы (Stocks Report API) ===
     logger.info("Загрузка остатков и заказов (Stocks Report API)...")
     stocks, orders = get_stocks_report(token=token)
     logger.info(f"✓ Stocks Report: {len(stocks)} товаров")
 
-    # === 5. OUTER JOIN: stocks + orders ===
-    # Сохраняем новые WB-метрики из orders в отдельный индекс — merge_orders_stocks
-    # о них не знает, чтобы не ломать сигнатуру/тесты.
-    metrics_index = {}
-    if not orders.empty:
-        metric_cols = ('availability', 'sale_rate_days', 'office_missing_days',
-                       'lost_orders', 'trend_pct')
-        present = [c for c in metric_cols if c in orders.columns]
-        if present:
-            for _, r in orders.iterrows():
-                metrics_index[int(r['nmId'])] = {c: r.get(c) for c in present}
+    return catalog, catalog_ok, prices_map, prices_articles, prices_barcodes, stocks, orders
 
-    df = merge_orders_stocks(orders, stocks)
 
-    # Заполняем поля возвратов если отсутствуют после merge
-    for col in ['in_way_from_client', 'stock_qty_clean']:
-        if col not in df.columns:
-            df[col] = 0
-        df[col] = df[col].fillna(0).astype(int)
-
-    # Используем чистый остаток (без товаров в возврате) для расчётов
-    df['stock_qty_original'] = df['stock_qty']
-    df['stock_qty'] = df['stock_qty_clean']
-
-    # === 6. Восстановление товаров из каталога ∪ prices_map ===
+def _enrich_metadata(df, catalog, catalog_ok, prices_map, prices_articles, prices_barcodes):
+    """Обогащает DataFrame метаданными: каталог, баркоды, артикулы."""
     existing_nm_ids = set(df['nmId'].tolist())
     all_known_ids = set(catalog.keys()) | set(prices_map.keys())
     missing_nm_ids = [nm for nm in all_known_ids if nm not in existing_nm_ids]
@@ -117,17 +78,14 @@ def fetch_store_data(
             lambda nm: catalog.get(nm, {}).get('barcode', ''))
         df = pd.concat([df, missing_df], ignore_index=True)
 
-    # === 7. Обогащение метаданных из каталога для всех товаров ===
     for col in ['supplierArticle', 'subject', 'category']:
         mask = df[col].isna() | (df[col] == '')
         if mask.any():
             df.loc[mask, col] = df.loc[mask, 'nmId'].map(
                 lambda nm: catalog.get(nm, {}).get(col, ''))
 
-    # === 7a. Обогащение баркодов из каталога ===
     if 'barcode' not in df.columns:
         df['barcode'] = ''
-    # Нормализуем: NaN → '' для корректной работы масок
     df['barcode'] = df['barcode'].fillna('')
     mask = df['barcode'] == ''
     if mask.any() and catalog_ok:
@@ -137,7 +95,6 @@ def fetch_store_data(
         filled = (df['barcode'] != '').sum()
         logger.info(f"Баркоды из каталога: {filled}/{len(df)}")
 
-    # === 7b. Fallback баркодов из Prices API ===
     mask = df['barcode'] == ''
     if mask.any() and prices_barcodes:
         df.loc[mask, 'barcode'] = df.loc[mask, 'nmId'].map(
@@ -147,35 +104,29 @@ def fetch_store_data(
         if still_empty:
             logger.warning(f"Баркоды: {still_empty} товаров без баркода после всех fallback")
 
-    # === 7c. Fallback артикулов из Prices API (для товаров не в каталоге) ===
     mask = df['supplierArticle'].isna() | (df['supplierArticle'] == '')
     if mask.any():
         df.loc[mask, 'supplierArticle'] = df.loc[mask, 'nmId'].map(
             lambda nm: prices_articles.get(nm, ''))
 
     logger.info(f"Всего товаров в каталоге: {len(df)}")
+    return df
 
-    # === 5. Группировка A/B/C по среднему за 14д ===
-    # Если avg_per_day уже пришёл из Stocks Report API — используем его,
-    # иначе считаем вручную (legacy fallback)
+
+def _calculate_metrics(df, days_threshold, threshold_a, threshold_b, threshold_c):
+    """Рассчитывает группы, days_remaining, price_increase."""
     if 'avg_per_day' not in df.columns or df['avg_per_day'].isna().all():
         df['avg_per_day'] = df['orders_count_14d'] / 14
     else:
         df['avg_per_day'] = df['avg_per_day'].fillna(df['orders_count_14d'] / 14)
     df['group'] = df['avg_per_day'].apply(lambda x: assign_group(x, threshold_a, threshold_b, threshold_c))
-
-    # === 6. Расчёт days_remaining ===
     df['days_remaining'] = df.apply(calc_days_remaining, axis=1)
-
-    # === 7. Расчёт % повышения цены ===
     df['price_increase_pct'] = df['days_remaining'].apply(lambda d: get_price_increase(d, days_threshold))
+    return df
 
-    # === 8. Маппинг цен ===
-    df['price'] = df['nmId'].map(prices_map)
 
-    logger.info("=== Данные загружены и рассчитаны ===")
-
-    # Конвертируем в list[dict] для сохранения в БД
+def _to_dicts(df, metrics_index, prices_map):
+    """Конвертирует DataFrame в list[dict] для сохранения в БД."""
     result = []
     for _, row in df.iterrows():
         nm_id = int(row['nmId'])
@@ -191,21 +142,64 @@ def fetch_store_data(
             'stock_qty_clean': int(row['stock_qty_clean']),
             'orders_7d': int(row['orders_count_7d']) if pd.notna(row.get('orders_count_7d')) else None,
             'orders_14d': int(row['orders_count_14d']) if pd.notna(row.get('orders_count_14d')) else None,
-            'orders_30d': None,  # больше не запрашивается, колонка сохранена для совместимости БД
+            'orders_30d': None,
             'avg_per_day': round(row['avg_per_day'], 4),
             'days_remaining': round(row['days_remaining'], 2) if row['days_remaining'] is not None else None,
             'price_increase_pct': int(row['price_increase_pct']),
             'price': float(row['price']) if pd.notna(row.get('price')) else None,
             'barcode': row.get('barcode') if pd.notna(row.get('barcode')) else '',
-            # Новые WB-метрики (для блока «Предложение WB» на листе «Поставки»)
             'availability': (m.get('availability') or '') if m else '',
             'sale_rate_days': float(m.get('sale_rate_days') or 0) if m else 0.0,
             'office_missing_days': float(m.get('office_missing_days') or 0) if m else 0.0,
             'lost_orders': float(m.get('lost_orders') or 0) if m else 0.0,
             'trend_pct': float(m.get('trend_pct') or 0) if m else 0.0,
         })
-
     return result
+
+
+def fetch_store_data(
+    token: str = None,
+    days_threshold: int = 7,
+    threshold_a: float = THRESHOLD_A,
+    threshold_b: float = THRESHOLD_B,
+    threshold_c: float = THRESHOLD_C,
+) -> list[dict]:
+    """
+    Загружает данные из WB API, рассчитывает метрики.
+
+    Returns:
+        Список словарей — по одному на каждый товар (nm_id).
+    """
+    logger.info("=== Загрузка данных из WB API ===")
+
+    catalog, catalog_ok, prices_map, prices_articles, prices_barcodes, stocks, orders = _fetch_raw_data(token)
+
+    metrics_index = {}
+    if not orders.empty:
+        metric_cols = ('availability', 'sale_rate_days', 'office_missing_days',
+                       'lost_orders', 'trend_pct')
+        present = [c for c in metric_cols if c in orders.columns]
+        if present:
+            for _, r in orders.iterrows():
+                metrics_index[int(r['nmId'])] = {c: r.get(c) for c in present}
+
+    df = merge_orders_stocks(orders, stocks)
+
+    for col in ['in_way_from_client', 'stock_qty_clean']:
+        if col not in df.columns:
+            df[col] = 0
+        df[col] = df[col].fillna(0).astype(int)
+
+    df['stock_qty_original'] = df['stock_qty']
+    df['stock_qty'] = df['stock_qty_clean']
+
+    df = _enrich_metadata(df, catalog, catalog_ok, prices_map, prices_articles, prices_barcodes)
+    df = _calculate_metrics(df, days_threshold, threshold_a, threshold_b, threshold_c)
+    df['price'] = df['nmId'].map(prices_map)
+
+    logger.info("=== Данные загружены и рассчитаны ===")
+
+    return _to_dicts(df, metrics_index, prices_map)
 
 
 def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
@@ -232,18 +226,12 @@ def fetch_warehouse_data(token: str, nm_ids: list = None) -> list[dict]:
     ]
 
 
-# ── Кэширование ──────────────────────────────────────────────────────────────
-
 async def fetch_or_cache_product(store_id, token, days_threshold, threshold_a, threshold_b,
                                  force_refresh=FORCE_REFRESH):
     """Загружает данные товаров из кэша или API."""
     if not force_refresh and await is_data_fresh(store_id, DATA_CACHE_TTL):
         rows, _ = await get_latest_product_data(store_id)
-        # Проверяем что кэш содержит баркоды и новые WB-метрики
         has_barcodes = any(r.get('barcode') for r in rows) if rows else False
-        # availability — индикатор расширенного снимка (после внедрения «Предложения WB»).
-        # Поле может быть пустой строкой для отдельных товаров, поэтому проверяем
-        # наличие ключа в любой записи, а не его truthiness.
         has_wb_metrics = any('availability' in r for r in rows) if rows else False
         if rows and has_barcodes and has_wb_metrics:
             return rows

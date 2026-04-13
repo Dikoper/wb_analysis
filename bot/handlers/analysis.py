@@ -4,6 +4,7 @@
 
 import os
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -17,7 +18,7 @@ from bot.keyboards import (
 from bot.config import MSK_TZ
 from bot.db import (
     get_stores, get_store, get_last_report, save_report_history, get_setting,
-    log_action,
+    get_calc_params, log_action,
 )
 from bot.services.data_service import fetch_or_cache_product, fetch_or_cache_warehouse
 from bot.reports.single import generate_report_from_data
@@ -118,12 +119,13 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
     progress_msg = callback.message
 
     try:
-        days_threshold = int(await get_setting('calc_days_threshold', '7'))
-        threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
-        threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
-        threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
-        refill_reserve_pct = int(await get_setting('refill_reserve_pct', '20'))
-        refill_period_days = int(await get_setting('refill_period_days', '30'))
+        params = await get_calc_params()
+        days_threshold = params.days_threshold
+        threshold_a = params.threshold_a
+        threshold_b = params.threshold_b
+        threshold_c = params.threshold_c
+        refill_reserve_pct = params.refill_reserve_pct
+        refill_period_days = params.refill_period_days
 
         # 1. Загрузка данных из API (или из кэша если свежие)
         store_id = callback_data.store_id
@@ -135,7 +137,6 @@ async def generate_new_report(callback: CallbackQuery, callback_data: StoreCB):
         warehouse_rows = await fetch_or_cache_warehouse(store_id, store['token'])
 
         # 2b. Загрузка настроек распределения по складам
-        import json
         wh_dist_raw = await get_setting('refill_warehouse_distribution', '[]')
         try:
             warehouse_distribution = json.loads(wh_dist_raw)
