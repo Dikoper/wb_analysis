@@ -17,9 +17,6 @@ from bot.config import (
     THRESHOLD_A as DEFAULT_THRESHOLD_A,
     THRESHOLD_B as DEFAULT_THRESHOLD_B,
     THRESHOLD_C as DEFAULT_THRESHOLD_C,
-    DEFAULT_REFILL_DAYS_1,
-    DEFAULT_REFILL_DAYS_2,
-    DEFAULT_REFILL_DAYS_3,
     DEFAULT_REFILL_RESERVE_PCT,
 )
 from bot.db import get_setting, set_setting, is_subscriber, add_subscriber, remove_subscriber
@@ -45,15 +42,14 @@ async def _send_settings(callback: CallbackQuery):
 
 async def _get_calc_params() -> dict:
     """Читает все параметры расчёта из настроек."""
+    from bot.config import REFILL_PERIOD_DAYS as DEFAULT_REFILL_PERIOD_DAYS
     return {
         'days_n': int(await get_setting('calc_days_threshold', str(DEFAULT_DAYS_N))),
         'threshold_a': float(await get_setting('calc_threshold_a', str(DEFAULT_THRESHOLD_A))),
         'threshold_b': float(await get_setting('calc_threshold_b', str(DEFAULT_THRESHOLD_B))),
         'threshold_c': float(await get_setting('calc_threshold_c', str(DEFAULT_THRESHOLD_C))),
-        'refill_days_1': int(await get_setting('refill_days_1', str(DEFAULT_REFILL_DAYS_1))),
-        'refill_days_2': int(await get_setting('refill_days_2', str(DEFAULT_REFILL_DAYS_2))),
-        'refill_days_3': int(await get_setting('refill_days_3', str(DEFAULT_REFILL_DAYS_3))),
         'refill_reserve_pct': int(await get_setting('refill_reserve_pct', str(DEFAULT_REFILL_RESERVE_PCT))),
+        'refill_period_days': int(await get_setting('refill_period_days', str(DEFAULT_REFILL_PERIOD_DAYS))),
     }
 
 
@@ -321,93 +317,13 @@ async def set_group_thresholds(message: Message, state: FSMContext, bot: Bot):
     logger.info(f"calc_threshold: A={a}, B={b}, C={c}")
 
 
-# === Параметры расчёта: пороги пополнения ===
-
-@router.callback_query(SettingsCB.filter(F.action == "refill_days"))
-async def ask_refill_days(callback: CallbackQuery, state: FSMContext):
-    """Запрос трёх порогов пополнения (дни)."""
-    d1 = int(await get_setting('refill_days_1', str(DEFAULT_REFILL_DAYS_1)))
-    d2 = int(await get_setting('refill_days_2', str(DEFAULT_REFILL_DAYS_2)))
-    d3 = int(await get_setting('refill_days_3', str(DEFAULT_REFILL_DAYS_3)))
-    await callback.message.edit_text(
-        "📥 <b>Пороги объёмов пополнения</b>\n\n"
-        f"Текущие значения (дни):\n"
-        f"  <b>1</b> = {d1}\n"
-        f"  <b>2</b> = {d2}\n"
-        f"  <b>3</b> = {d3}\n\n"
-        "Введите три целых числа через точку с запятой:\n"
-        "<code>d1 ; d2 ; d3</code>\n"
-        "Пример: <code>10 ; 30 ; 60</code>\n\n"
-        "Числа должны идти по возрастанию и быть в диапазоне 1..365.",
-        reply_markup=_back_to_calc_params_kb(),
-        parse_mode="HTML"
-    )
-    await state.update_data(bot_msg_id=callback.message.message_id)
-    await state.set_state(MenuStates.set_refill_days)
-    await callback.answer()
-
-
-@router.message(MenuStates.set_refill_days, F.text)
-async def set_refill_days(message: Message, state: FSMContext, bot: Bot):
-    """Обработка ввода трёх порогов пополнения."""
-    text = message.text.strip()
-
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    data = await state.get_data()
-    bot_msg_id = data.get('bot_msg_id')
-    chat_id = message.chat.id
-
-    async def edit_bot_msg(msg_text: str, reply_markup=None):
-        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
-
-    error_msg = (
-        "❌ Неверный формат. Введите три целых числа через точку с запятой:\n"
-        "<code>d1 ; d2 ; d3</code>\n"
-        "Пример: <code>10 ; 30 ; 60</code>\n"
-        "Требование: 1 ≤ d1 &lt; d2 &lt; d3 ≤ 365."
-    )
-
-    parts = text.split(';')
-    if len(parts) != 3:
-        await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
-        return
-
-    try:
-        d1 = int(parts[0].strip())
-        d2 = int(parts[1].strip())
-        d3 = int(parts[2].strip())
-    except ValueError:
-        await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
-        return
-
-    if not (1 <= d1 < d2 < d3 <= 365):
-        await edit_bot_msg(error_msg, reply_markup=_back_to_calc_params_kb())
-        return
-
-    await set_setting('refill_days_1', str(d1))
-    await set_setting('refill_days_2', str(d2))
-    await set_setting('refill_days_3', str(d3))
-    await state.clear()
-
-    params = await _get_calc_params()
-    await edit_bot_msg(
-        f"✅ Пороги пополнения: {d1}/{d2}/{d3} дн\n\n"
-        "📐 <b>Параметры расчёта</b>",
-        reply_markup=calc_params_kb(**params)
-    )
-    logger.info(f"refill_days: {d1}/{d2}/{d3}")
-
 
 @router.callback_query(SettingsCB.filter(F.action == "refill_reserve"))
 async def ask_refill_reserve(callback: CallbackQuery, state: FSMContext):
     """Запрос процента запаса пополнения."""
     current = int(await get_setting('refill_reserve_pct', str(DEFAULT_REFILL_RESERVE_PCT)))
     await callback.message.edit_text(
-        "➕ <b>Запас пополнения (%)</b>\n\n"
+        "➕ <b>Запас пополнения остатков (%)</b>\n\n"
         f"Текущее значение: <b>{current}%</b>\n\n"
         "Формула: <code>refill = avg × дни × (1 + запас/100)</code>\n\n"
         "Введите целое число от 0 до 200.",
@@ -443,7 +359,7 @@ async def set_refill_reserve(message: Message, state: FSMContext, bot: Bot):
     except ValueError:
         await edit_bot_msg(
             "❌ Неверное значение. Введите целое число от 0 до 200.\n\n"
-            "➕ <b>Запас пополнения (%)</b>",
+            "➕ <b>Запас пополнения остатков (%)</b>",
             reply_markup=_back_to_calc_params_kb()
         )
         return
@@ -458,6 +374,65 @@ async def set_refill_reserve(message: Message, state: FSMContext, bot: Bot):
         reply_markup=calc_params_kb(**params)
     )
     logger.info(f"refill_reserve_pct: {pct}")
+
+
+@router.callback_query(SettingsCB.filter(F.action == "refill_period"))
+async def ask_refill_period(callback: CallbackQuery, state: FSMContext):
+    """Запрос срока расчёта объёма поставки (дни)."""
+    from bot.config import REFILL_PERIOD_DAYS as DEFAULT_REFILL_PERIOD_DAYS
+    current = int(await get_setting('refill_period_days', str(DEFAULT_REFILL_PERIOD_DAYS)))
+    await callback.message.edit_text(
+        "📆 <b>Срок расчёта объёма поставки</b>\n\n"
+        f"Текущее значение: <b>{current} дн</b>\n\n"
+        "Формула: <code>Объём = avg_day × n × (1 + буфер/100)</code>\n\n"
+        "Введите целое число от 1 до 365.",
+        reply_markup=_back_to_calc_params_kb(),
+        parse_mode="HTML"
+    )
+    await state.update_data(bot_msg_id=callback.message.message_id)
+    await state.set_state(MenuStates.set_refill_period)
+    await callback.answer()
+
+
+@router.message(MenuStates.set_refill_period, F.text)
+async def set_refill_period(message: Message, state: FSMContext, bot: Bot):
+    """Обработка ввода срока расчёта объёма."""
+    text = message.text.strip()
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    bot_msg_id = data.get('bot_msg_id')
+    chat_id = message.chat.id
+
+    async def edit_bot_msg(msg_text: str, reply_markup=None):
+        await edit_or_send(bot, chat_id, bot_msg_id, msg_text, reply_markup)
+
+    try:
+        n = int(text)
+        if not (1 <= n <= 365):
+            raise ValueError
+    except ValueError:
+        await edit_bot_msg(
+            "❌ Неверное значение. Введите целое число от 1 до 365.\n\n"
+            "📆 <b>Срок расчёта объёма поставки</b>",
+            reply_markup=_back_to_calc_params_kb()
+        )
+        return
+
+    await set_setting('refill_period_days', str(n))
+    await state.clear()
+
+    params = await _get_calc_params()
+    await edit_bot_msg(
+        f"✅ Срок расчёта объёма: <b>{n} дн</b>\n\n"
+        "📐 <b>Параметры расчёта</b>",
+        reply_markup=calc_params_kb(**params)
+    )
+    logger.info(f"refill_period_days: {n}")
 
 
 # ── Распределение по складам ─────────────────────────────────────────────────
@@ -513,7 +488,7 @@ async def show_warehouse_distrib(callback: CallbackQuery):
         distrib = []
     text = await _format_distrib_text(distrib)
     await callback.message.edit_text(
-        f"🏭 <b>Распределение по складам</b>\n\n<pre>{text}</pre>",
+        f"🏭 <b>Склады поставок</b>\n\n<pre>{text}</pre>",
         reply_markup=_warehouse_distrib_kb(),
         parse_mode="HTML",
     )
@@ -626,7 +601,7 @@ async def wh_distrib_save(callback: CallbackQuery, state: FSMContext):
     distrib = json.loads(pending)
     text = await _format_distrib_text(distrib)
     await callback.message.edit_text(
-        f"✅ Сохранено!\n\n🏭 <b>Распределение по складам</b>\n<pre>{text}</pre>",
+        f"✅ Сохранено!\n\n🏭 <b>Склады поставок</b>\n<pre>{text}</pre>",
         reply_markup=_warehouse_distrib_kb(),
         parse_mode="HTML",
     )

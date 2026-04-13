@@ -80,12 +80,8 @@ async def send_daily_reports(bot: Bot):
     threshold_a = float(await get_setting('calc_threshold_a', '4.0'))
     threshold_b = float(await get_setting('calc_threshold_b', '0.5'))
     threshold_c = float(await get_setting('calc_threshold_c', '0.2'))
-    refill_days = [
-        int(await get_setting('refill_days_1', '10')),
-        int(await get_setting('refill_days_2', '30')),
-        int(await get_setting('refill_days_3', '60')),
-    ]
     refill_reserve_pct = int(await get_setting('refill_reserve_pct', '20'))
+    refill_period_days = int(await get_setting('refill_period_days', '30'))
 
     # Отчёт по каждому магазину + накопление данных для сводного
     all_stores_data = {}   # {store_name: product_rows}
@@ -111,7 +107,8 @@ async def send_daily_reports(bot: Bot):
                 generate_report_from_data, product_rows=product_rows, store_name=name,
                 days_threshold=days_threshold, threshold_a=threshold_a, threshold_b=threshold_b,
                 threshold_c=threshold_c, warehouse_rows=warehouse_rows,
-                refill_days=refill_days, refill_reserve_pct=refill_reserve_pct,
+                refill_reserve_pct=refill_reserve_pct,
+                refill_period_days=refill_period_days,
             )
             await save_report_history(store['id'], report_path)
 

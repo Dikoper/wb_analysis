@@ -12,7 +12,6 @@ from openpyxl.utils import get_column_letter
 
 from bot.config import (
     THRESHOLD_A, THRESHOLD_B, THRESHOLD_C,
-    DEFAULT_REFILL_DAYS_1, DEFAULT_REFILL_DAYS_2, DEFAULT_REFILL_DAYS_3,
     DEFAULT_REFILL_RESERVE_PCT,
     REFILL_PERIOD_DAYS, REFILL_SAFETY_BUFFER, MAX_REFILL_WAREHOUSES,
 )
@@ -32,6 +31,7 @@ from bot.reports.excel_styles import (
     apply_hyperlinks,
     apply_group_colors,
     apply_legend_style,
+    write_legend_block,
     write_article_cell,
     write_barcode_cell,
     write_lost_orders_cell,
@@ -269,7 +269,7 @@ def _build_refill_calc_sheet(
             c_cell.value = wc['cutoff_days']
 
     # ── Row 4: шапка товарной таблицы ──────────────────────────────────
-    static_headers = {COL_ART: 'Артикул', COL_BAR: 'Баркод', COL_VOL: 'Объём', COL_WH_DET: 'Остатки по складам'}
+    static_headers = {COL_ART: 'Артикул', COL_BAR: 'Баркод', COL_VOL: f'Объём\n{n}д', COL_WH_DET: 'Остатки по складам'}
     for col_num, title in static_headers.items():
         cell = ws.cell(row=ROW_HEADER, column=col_num, value=title)
         cell.font = HEADER_FONT
@@ -399,6 +399,18 @@ def _build_refill_calc_sheet(
         wh_det_cell.alignment = WRAP_LEFT
         wh_det_cell.border = data_border
 
+    # ── Легенда ─────────────────────────────────────────────────────────
+    legend_start = ROW_DATA_START + len(sorted_rows) + 1
+    write_legend_block(ws, legend_start, [
+        ('— Поставки: расчёт —', 'title'),
+        (f'Объём = avg_day × {n}д × (1 + буфер%). Буфер задаётся в настройках бота.', 'item'),
+        ('Скрытые колонки M..U: дней покрытия (M) и остатки по каждому складу (N..U) — для формул.', 'note'),
+        ('Параметры складов (строки 2-3): Вес % и Отсечка — редактируются прямо в таблице.', 'item'),
+        ('Объём в колонке C можно вручную скорректировать — формулы складов пересчитаются автоматически.', 'item'),
+        ('Формула склада: MAX(0, ROUND(Объём × Вес/100 × коэф, 0) − Остаток_склад)', 'note'),
+        ('коэф = 2, если дней покрытия < Отсечка (товар заканчивается); иначе = 1.', 'note'),
+    ])
+
     logger.info(f"Лист '{sheet_name}': {len(sorted_rows)} товаров записано")
 
 
@@ -488,8 +500,8 @@ def generate_report_from_data(
     threshold_b: float = THRESHOLD_B,
     threshold_c: float = THRESHOLD_C,
     warehouse_rows: list[dict] = None,
-    refill_days: list[int] = None,
     refill_reserve_pct: float = DEFAULT_REFILL_RESERVE_PCT,
+    refill_period_days: int = REFILL_PERIOD_DAYS,
     warehouse_distribution: list[dict] = None,
 ) -> str:
     """
@@ -507,10 +519,6 @@ def generate_report_from_data(
         Путь к сгенерированному файлу
     """
     logger.info("=== Генерация Excel-отчёта ===")
-
-    # Дефолты для новых параметров (если вызвано из старого кода)
-    if refill_days is None or len(refill_days) != 3:
-        refill_days = [DEFAULT_REFILL_DAYS_1, DEFAULT_REFILL_DAYS_2, DEFAULT_REFILL_DAYS_3]
 
     df = pd.DataFrame(product_rows)
 
@@ -567,12 +575,14 @@ def generate_report_from_data(
             writer, 'Поставки - расчёт',
             product_rows, warehouse_rows or [],
             warehouse_distribution or [], wh_index,
+            n=refill_period_days,
         )
 
         # ── Лист «Поставки - предложение» (WB-метрики, все товары) ─────
         _build_wb_suggestion_sheet(
             writer, 'Поставки - предложение',
             product_rows,
+            n=refill_period_days,
         )
 
         # ── Форматирование «Все товары» ────────────────────────────────
@@ -601,6 +611,21 @@ def generate_report_from_data(
 
         # Стилизация колонки складов (col 10)
         _style_wh_column(ws, wh_col=10, num_rows=len(all_export))
+
+        # Легенда
+        legend_start = len(all_export) + 3  # +1 шапка, +1 пустая строка
+        write_legend_block(ws, legend_start, [
+            ('— Группы товаров —', 'title'),
+            ('A — высокие продажи (быстрые)', 'item'),
+            ('B — средние продажи', 'item'),
+            ('C — низкие продажи (медленные)', 'item'),
+            ('D — почти нет продаж (неликвид)', 'item'),
+            ('Границы групп задаются в настройках бота (Параметры расчёта → Границы групп).', 'note'),
+            ('', 'note'),
+            ('— Колонки —', 'title'),
+            ('Дней осталось — остаток / средние продажи в день. Пусто = нет продаж.', 'item'),
+            ('Остатки по складам — детализация остатков. Наведите на ячейку для подробностей.', 'item'),
+        ])
 
     logger.info(f"✓ Отчёт сохранён: {output_path}")
     logger.info("=== Генерация завершена ===")
