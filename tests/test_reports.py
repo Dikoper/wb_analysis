@@ -27,7 +27,7 @@ class TestSingleReport:
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        assert set(wb.sheetnames) == {'На исходе', 'Нет на складе', 'Поставки', 'Все товары'}
+        assert set(wb.sheetnames) == {'Все товары', 'Поставки - расчёт', 'Поставки - предложение'}
 
     def test_all_products_sheet_has_all_rows(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
@@ -36,7 +36,6 @@ class TestSingleReport:
         )
         wb = load_workbook(path)
         ws = wb['Все товары']
-        # Строка 1 — шапка, данные начинаются со 2-й
         data_rows = [r for r in ws.iter_rows(min_row=2) if r[0].value is not None]
         assert len(data_rows) == len(product_rows)
 
@@ -45,74 +44,62 @@ class TestSingleReport:
         path = generate_report_from_data([], store_name='Empty')
         assert os.path.exists(path)
 
-    def test_refill_sheet_uses_lookup_formula(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+    def test_refill_calc_sheet_uses_if_formula(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+        """Лист «Поставки - расчёт» с warehouse_distribution: колонки D..K содержат IF-формулы."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
+        dist = [
+            {'warehouse_id': 507, 'weight': 50, 'cutoff_days': 3},
+        ]
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
+            warehouse_distribution=dist,
         )
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        # Двухстрочная шапка: row 1 — баннеры, row 2 — подзаголовки, данные с row 3.
-        # ART-1 в фикстуре имеет price_increase_pct>0, avg>0, баркод → попадает в refill.
-        d_cell = ws.cell(row=3, column=4)
+        ws = wb['Поставки - расчёт']
+        # Row 4 — шапка, данные с row 5. ART-1 имеет avg>0 → попадает в данные.
+        d_cell = ws.cell(row=5, column=4)
         assert isinstance(d_cell.value, str) and d_cell.value.startswith('=IF(')
-        # Формула должна ссылаться на скрытые P/Q/R
-        assert 'P3' in d_cell.value
-        assert 'Q3' in d_cell.value
-        assert 'R3' in d_cell.value
-        e_cell = ws.cell(row=3, column=5)
-        assert e_cell.value in (10, 30, 60)
-        # P/Q/R — предрассчитанные числа
-        assert isinstance(ws.cell(row=3, column=16).value, (int, float))
-        assert isinstance(ws.cell(row=3, column=17).value, (int, float))
-        assert isinstance(ws.cell(row=3, column=18).value, (int, float))
-        assert ws.column_dimensions['P'].hidden is True
-        assert ws.column_dimensions['Q'].hidden is True
-        assert ws.column_dimensions['R'].hidden is True
 
-    def test_refill_suggestion_block_headers(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
-        """Шапка блока «Предложение WB» содержит ожидаемые подзаголовки."""
+    def test_refill_calc_hidden_columns(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+        """Лист «Поставки - расчёт»: колонки M..U скрыты (days_cover + stock per wh)."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        # Row 2 — подзаголовки
-        assert ws.cell(row=2, column=9).value == 'Баркод'
-        assert ws.cell(row=2, column=10).value == 'Объём WB'
-        assert ws.cell(row=2, column=11).value == 'Оборотность'
-        assert ws.cell(row=2, column=13).value == 'Упущено заказов'
-        assert ws.cell(row=2, column=14).value == 'Срок рапродажи остатка (WB)'
-        assert ws.cell(row=2, column=15).value == 'Тренд'
+        ws = wb['Поставки - расчёт']
+        assert ws.column_dimensions['M'].hidden is True
 
-    def test_refill_sale_rate_header_has_comment(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
-        """Шапка «Распродать (WB)» содержит поясняющий комментарий."""
+    def test_wb_suggestion_headers(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+        """Шапка листа «Поставки - предложение» содержит ожидаемые заголовки."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        header_cell = ws.cell(row=2, column=14)
-        assert header_cell.comment is not None
-        assert 'saleRate' in header_cell.comment.text
+        ws = wb['Поставки - предложение']
+        assert ws.cell(row=1, column=1).value == 'Артикул'
+        assert ws.cell(row=1, column=2).value == 'Баркод'
+        assert ws.cell(row=1, column=3).value == 'Объём WB'
+        assert ws.cell(row=1, column=4).value == 'Оборотность'
+        assert ws.cell(row=1, column=6).value == 'Упущено заказов'
+        assert ws.cell(row=1, column=7).value == 'Срок продаж (WB)'
+        assert ws.cell(row=1, column=8).value == 'Тренд'
 
     def test_nonliquid_zero_volume(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
-        """Товар с availability=nonLiquid → объём WB = 0."""
+        """Товар с availability=nonLiquid → объём WB = 0 на листе «Поставки - предложение»."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        # Найти строку с ART-2 (nonLiquid в фикстуре)
-        for row in range(3, ws.max_row + 1):
+        ws = wb['Поставки - предложение']
+        for row in range(2, ws.max_row + 1):
             if ws.cell(row=row, column=1).value == 'ART-2':
-                assert ws.cell(row=row, column=10).value == 0
-                assert ws.cell(row=row, column=11).value == 'неликвид'
+                assert ws.cell(row=row, column=3).value == 0
+                assert ws.cell(row=row, column=4).value == 'неликвид'
                 return
-        assert False, 'ART-2 не найден на листе Поставки'
+        assert False, 'ART-2 не найден на листе Поставки - предложение'
 
     def test_burning_fill_when_lost_positive(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
         """ART-1 имеет lost_orders=3.4 → ячейка «Упущено заказов» залита красным."""
@@ -121,18 +108,18 @@ class TestSingleReport:
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        for row in range(3, ws.max_row + 1):
+        ws = wb['Поставки - предложение']
+        for row in range(2, ws.max_row + 1):
             if ws.cell(row=row, column=1).value == 'ART-1':
-                lost_cell = ws.cell(row=row, column=13)
+                lost_cell = ws.cell(row=row, column=6)
                 assert lost_cell.value == 3
                 assert lost_cell.fill.fgColor.rgb is not None
                 assert 'FFCC' in (lost_cell.fill.fgColor.rgb or '')
                 return
-        assert False, 'ART-1 не найден на листе Поставки'
+        assert False, 'ART-1 не найден на листе Поставки - предложение'
 
-    def test_lost_below_half_shows_dash_no_fill(self, warehouse_rows, tmp_path, monkeypatch):
-        """lost_orders=0.3 → round=0 → должно быть «—» и без красной заливки."""
+    def test_lost_below_half_shows_none_no_fill(self, warehouse_rows, tmp_path, monkeypatch):
+        """lost_orders=0.3 → round=0 → None и без красной заливки."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         rows = [{
             'nm_id': 500, 'supplier_article': 'ART-LOW', 'barcode': '2000000000500',
@@ -146,45 +133,34 @@ class TestSingleReport:
         }]
         path = generate_report_from_data(rows, store_name='T', warehouse_rows=[])
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        # Первая (и единственная) строка данных
-        lost_cell = ws.cell(row=3, column=13)
-        assert lost_cell.value == '—'
-        # Без красной заливки
+        ws = wb['Поставки - предложение']
+        lost_cell = ws.cell(row=2, column=6)
+        assert lost_cell.value is None
         rgb = lost_cell.fill.fgColor.rgb or ''
         assert 'FFCC' not in rgb
 
-    def test_wh_column_wraps_text(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
-        """Колонка «Остатки по складам» (col 7) на «Поставках» имеет wrap_text."""
+    def test_wb_suggestion_trend_fill(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
+        """ART-1 имеет trend_pct=15 → ячейка «Тренд» залита зелёным."""
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
         path = generate_report_from_data(
             product_rows, store_name='Test', warehouse_rows=warehouse_rows,
         )
         wb = load_workbook(path)
-        ws = wb['Поставки']
-        # Берём первую строку данных
-        cell = ws.cell(row=3, column=7)
-        assert cell.alignment.wrap_text is True
-
-    def test_gap_columns_have_fill(self, product_rows, warehouse_rows, tmp_path, monkeypatch):
-        """Separator col 8 — залит жёлтым (в цвет баннера «ПРЕДЛОЖЕНИЕ WB»)."""
-        monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
-        path = generate_report_from_data(
-            product_rows, store_name='Test', warehouse_rows=warehouse_rows,
-        )
-        wb = load_workbook(path)
-        ws = wb['Поставки']
-        cell = ws.cell(row=3, column=8)
-        rgb = cell.fill.fgColor.rgb or ''
-        assert 'FFE699' in rgb
+        ws = wb['Поставки - предложение']
+        for row in range(2, ws.max_row + 1):
+            if ws.cell(row=row, column=1).value == 'ART-1':
+                trend_cell = ws.cell(row=row, column=8)
+                rgb = trend_cell.fill.fgColor.rgb or ''
+                assert 'C8E6C9' in rgb
+                return
+        assert False, 'ART-1 не найден'
 
 
 class TestComparisonReport:
     def test_generates_file(self, product_rows, tmp_path, monkeypatch):
         monkeypatch.setattr('bot.config.REPORTS_DIR', str(tmp_path))
-        # Берём часть товаров для каждого магазина (ART-1, ART-2 общие)
         store1 = product_rows[:2]
-        store2 = [product_rows[0], product_rows[2]]  # ART-1 и ART-3
+        store2 = [product_rows[0], product_rows[2]]
         path = generate_comparison_report(store1, store2, 'Магазин 1', 'Магазин 2')
         assert path is not None
         assert os.path.exists(path)
@@ -207,7 +183,6 @@ class TestComparisonReport:
         )
         wb = load_workbook(path)
         ws = wb.active
-        # 2 общих артикула × 2 строки = 4 строки данных
         data_rows = [r for r in ws.iter_rows(min_row=2) if r[1].value is not None]
         assert len(data_rows) == 4
 

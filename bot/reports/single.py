@@ -17,20 +17,27 @@ from bot.config import (
     REFILL_PERIOD_DAYS, REFILL_SAFETY_BUFFER, MAX_REFILL_WAREHOUSES,
 )
 from bot.services.calculations import (
-    merge_wh_by_name, wh_compact_str, calc_refill_qty,
+    merge_wh_by_name, wh_compact_str,
     calc_smart_refill_qty, availability_ru, trend_arrow,
 )
 from bot.reports.excel_styles import (
     HYPERLINK_FONT, LEFT, CENTER, WRAP_LEFT,
+    HEADER_FONT, HEADER_FILL, HEADER_ALIGN,
     HEADER_BG, HEADER_FG, GROUP_COLORS,
+    BURNING_FILL, BARCODE_FILL,
     WB_PRODUCT_URL,
+    DATA_FONT,
     apply_header_style,
     apply_data_style,
     apply_hyperlinks,
     apply_group_colors,
     apply_legend_style,
+    write_article_cell,
+    write_barcode_cell,
+    write_lost_orders_cell,
+    write_wb_data_cells,
+    write_header_row,
     add_stock_comment,
-    add_days_dropdown,
     make_report_path,
     fill,
     thin_border,
@@ -202,10 +209,8 @@ def _build_refill_calc_sheet(
                             outline_level=1, hidden=False)
 
     # ── Стили ──────────────────────────────────────────────────────────
-    data_font = Font(name='Arial', size=10, color='1A1A2E')
     data_border = thin_border()
     wh_font = Font(name='Arial', size=9, color='555555')
-    barcode_fill = PatternFill('solid', fgColor='F0F0F0')
     stock_cell_fill = PatternFill('solid', fgColor='FFF8E1')
 
     # Цветовой градиент для столбцов складов (8 оттенков)
@@ -264,16 +269,12 @@ def _build_refill_calc_sheet(
             c_cell.value = wc['cutoff_days']
 
     # ── Row 4: шапка товарной таблицы ──────────────────────────────────
-    header_font = Font(name='Arial', size=11, bold=True, color=HEADER_FG)
-    header_fill_style = PatternFill('solid', fgColor=HEADER_BG)
-    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
     static_headers = {COL_ART: 'Артикул', COL_BAR: 'Баркод', COL_VOL: 'Объём', COL_WH_DET: 'Остатки по складам'}
     for col_num, title in static_headers.items():
         cell = ws.cell(row=ROW_HEADER, column=col_num, value=title)
-        cell.font = header_font
-        cell.fill = header_fill_style
-        cell.alignment = header_align
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
         cell.border = thin_border('444444')
 
     # Динамические заголовки складов (формулы)
@@ -281,9 +282,9 @@ def _build_refill_calc_sheet(
         col_wh = COL_WH_START + i
         L_wh = get_column_letter(col_wh)
         cell = ws.cell(row=ROW_HEADER, column=col_wh)
-        cell.font = header_font
-        cell.fill = header_fill_style
-        cell.alignment = header_align
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
         cell.border = thin_border('444444')
         if i < num_wh:
             name = wh_configs[i].get('display_name', f'Склад {i+1}')
@@ -330,21 +331,10 @@ def _build_refill_calc_sheet(
         article = r.get('supplier_article', '') or ''
 
         # A: Артикул (hyperlink)
-        a_cell = ws.cell(row=row_num, column=COL_ART, value=article)
-        a_cell.font = data_font
-        a_cell.alignment = LEFT
-        a_cell.border = data_border
-        if article and nm_id is not None:
-            a_cell.hyperlink = WB_PRODUCT_URL.format(nm_id)
-            a_cell.font = HYPERLINK_FONT
+        write_article_cell(ws, row_num, COL_ART, article, nm_id, data_border)
 
         # B: Баркод (серая заливка)
-        b_cell = ws.cell(row=row_num, column=COL_BAR, value=barcode)
-        b_cell.font = data_font
-        b_cell.alignment = CENTER
-        b_cell.number_format = '@'
-        b_cell.border = data_border
-        b_cell.fill = barcode_fill
+        write_barcode_cell(ws, row_num, COL_BAR, barcode, data_border, bg_fill=BARCODE_FILL)
 
         # Stocks per warehouse
         stock_map = stock_by_wh_for_nm(nm_id) if nm_id and warehouse_rows else {}
@@ -359,7 +349,7 @@ def _build_refill_calc_sheet(
             days_cover = 9999
 
         vol_cell = ws.cell(row=row_num, column=COL_VOL, value=volume)
-        vol_cell.font = data_font
+        vol_cell.font = DATA_FONT
         vol_cell.alignment = CENTER
         vol_cell.number_format = '0'
         vol_cell.border = data_border
@@ -383,7 +373,7 @@ def _build_refill_calc_sheet(
             L_wh = get_column_letter(col_wh)
             L_stock_wh = get_column_letter(COL_SWH_START + wi)
             cell_wh = ws.cell(row=row_num, column=col_wh)
-            cell_wh.font = data_font
+            cell_wh.font = DATA_FONT
             cell_wh.alignment = CENTER
             cell_wh.number_format = '0'
             cell_wh.border = data_border
@@ -439,15 +429,7 @@ def _build_wb_suggestion_sheet(
     ]
     col_widths = {1: 26, 2: 20, 3: 12, 4: 14, 5: 16, 6: 16, 7: 22, 8: 12}
 
-    header_font = Font(name='Arial', size=11, bold=True, color=HEADER_FG)
-    header_fill_style = PatternFill('solid', fgColor=HEADER_BG)
-    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    for idx, title in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=idx, value=title)
-        cell.font = header_font
-        cell.fill = header_fill_style
-        cell.alignment = header_align
-        cell.border = thin_border('444444')
+    write_header_row(ws, 1, headers)
     for col_num, width in col_widths.items():
         ws.column_dimensions[get_column_letter(col_num)].width = width
     ws.row_dimensions[1].height = 34
@@ -459,10 +441,8 @@ def _build_wb_suggestion_sheet(
         last_row = 2
     ws.auto_filter.ref = f'A1:H{last_row}'
 
-    # ── Стили ──────────────────────────────────────────────────────────
-    data_font = Font(name='Arial', size=10, color='1A1A2E')
+    # ── Данные ──────────────────────────────────────────────────────────
     data_border = thin_border()
-    burning_fill = PatternFill('solid', fgColor='FFCCCC')
 
     sorted_rows = sorted(product_rows, key=lambda r: r.get('avg_per_day', 0) or 0, reverse=True)
 
@@ -481,356 +461,23 @@ def _build_wb_suggestion_sheet(
         smart_qty = calc_smart_refill_qty(avg, n, reserve_pct, avail, miss, trend)
 
         # A: Артикул
-        a_cell = ws.cell(row=row_num, column=1, value=article)
-        a_cell.font = data_font
-        a_cell.alignment = LEFT
-        a_cell.border = data_border
-        if article and nm_id is not None:
-            a_cell.hyperlink = WB_PRODUCT_URL.format(nm_id)
-            a_cell.font = HYPERLINK_FONT
+        write_article_cell(ws, row_num, 1, article, nm_id, data_border)
 
         # B: Баркод
-        c = ws.cell(row=row_num, column=2, value=barcode)
-        c.font = data_font
-        c.alignment = CENTER
-        c.number_format = '@'
-        c.border = data_border
+        write_barcode_cell(ws, row_num, 2, barcode, data_border)
 
-        # C: Объём WB
-        c = ws.cell(row=row_num, column=3, value=smart_qty if avg > 0 else None)
-        c.font = data_font
-        c.alignment = CENTER
-        c.number_format = '0'
-        c.border = data_border
-
-        # D: Оборотность
-        c = ws.cell(row=row_num, column=4, value=availability_ru(avail))
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-
-        # E: Простой поставки
-        c = ws.cell(row=row_num, column=5, value=f'{miss:.0f} дн')
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-
-        # F: Упущено заказов
-        lost_rounded = round(lost)
-        c = ws.cell(row=row_num, column=6,
-                    value=lost_rounded if lost_rounded > 0 else None)
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-        if lost_rounded > 0:
-            c.fill = burning_fill
-
-        # G: Срок продаж (WB)
-        sr_val = f'{int(max(0, sale_rate))} дн' if sale_rate > 0 else '\u2014'
-        c = ws.cell(row=row_num, column=7, value=sr_val)
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-
-        # H: Тренд
-        c = ws.cell(row=row_num, column=8, value=trend_arrow(trend))
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-        if trend >= 5:
-            c.fill = PatternFill('solid', fgColor='C8E6C9')
-        elif trend <= -5:
-            c.fill = PatternFill('solid', fgColor='FFCCBC')
-        else:
-            c.fill = PatternFill('solid', fgColor='EEEEEE')
+        # C-H: WB метрики
+        write_wb_data_cells(
+            ws, row_num, 3,
+            smart_qty if avg > 0 else None,
+            availability_ru(avail), miss, lost, sale_rate,
+            trend_arrow(trend), trend,
+            border_vol=data_border, border_data=data_border,
+            lost_zero_value=None,
+        )
 
     logger.info(f"Лист '{sheet_name}': {len(sorted_rows)} товаров записано")
 
-
-def _build_refill_sheet(
-    writer,
-    df_refill: pd.DataFrame,
-    refill_days: list[int],
-    reserve_pct: float,
-    wh_index: dict,
-):
-    """
-    Лист «Поставки» — два блока:
-
-    Основной (col 1..7):
-        1 Артикул | 2 gap | 3 Баркод | 4 Объём | 5 Срок | 6 gap | 7 Остатки
-
-    Разделитель: col 8 (gap-separator).
-
-    Предложение WB (col 9..15) — зеркально основному, баркод+объём впереди:
-        9 Баркод | 10 Объём WB | 11 Оборотность | 12 Простой поставки |
-        13 Упущено | 14 Срок распродажи остатка (WB) | 15 Тренд
-
-    Скрытые P/Q/R (16..18) — предрассчитанные значения IF-формулы col 4.
-
-    Шапка двухстрочная: row 1 — merge-баннер блоков, row 2 — подзаголовки.
-    Данные начинаются с row 3, freeze_panes='A3'.
-    """
-    d1, d2, d3 = refill_days[0], refill_days[1], refill_days[2]
-    default_days = d2
-
-    sheet_name = 'Поставки'
-    # Создаём пустой лист — будем заполнять вручную (двухстрочная шапка не
-    # сочетается с pandas.to_excel).
-    wb = writer.book
-    if sheet_name in wb.sheetnames:
-        del wb[sheet_name]
-    ws = wb.create_sheet(sheet_name)
-    writer.sheets[sheet_name] = ws
-
-    # ── Конфигурация колонок ─────────────────────────────────────────────
-    col_widths = {
-        1: 26, 2: 2, 3: 20, 4: 12, 5: 9, 6: 9, 7: 36,
-        8: 3,
-        9: 20, 10: 12, 11: 14, 12: 14, 13: 11, 14: 22, 15: 12,
-        16: 0, 17: 0, 18: 0,  # скрытые P/Q/R
-    }
-    for col_num, width in col_widths.items():
-        ws.column_dimensions[get_column_letter(col_num)].width = width
-    for col_letter in ('P', 'Q', 'R'):
-        ws.column_dimensions[col_letter].hidden = True
-
-    # ── Row 1: merge-баннеры ─────────────────────────────────────────────
-    banner_font = Font(name='Arial', size=11, bold=True, color='1A1A2E')
-    banner_main_fill = PatternFill('solid', fgColor='E7EEF7')
-    banner_wb_fill = PatternFill('solid', fgColor='FFE699')
-    banner_align = Alignment(horizontal='center', vertical='center')
-
-    ws.merge_cells('A1:G1')
-    c = ws.cell(row=1, column=1, value='— Основной расчёт —')
-    c.font = banner_font
-    c.fill = banner_main_fill
-    c.alignment = banner_align
-    # Применяем заливку ко всем ячейкам merged-диапазона (для рамок)
-    for col in range(1, 8):
-        ws.cell(row=1, column=col).fill = banner_main_fill
-
-    ws.merge_cells('H1:O1')
-    c = ws.cell(row=1, column=8, value='ПРЕДЛОЖЕНИЕ WB')
-    c.font = banner_font
-    c.fill = banner_wb_fill
-    c.alignment = banner_align
-    for col in range(8, 16):
-        ws.cell(row=1, column=col).fill = banner_wb_fill
-
-    ws.row_dimensions[1].height = 22
-
-    # ── Row 2: подзаголовки ──────────────────────────────────────────────
-    headers = [
-        'Артикул', '', 'Баркод', 'Объём', 'Срок (дн)', 'Группа', 'Остатки по складам',
-        '',
-        'Баркод', 'Объём WB', 'Оборотность', 'Простой поставки',
-        'Упущено заказов', 'Срок рапродажи остатка (WB)', 'Тренд',
-    ]
-    header_font = Font(name='Arial', size=11, bold=True, color=HEADER_FG)
-    header_fill = PatternFill('solid', fgColor=HEADER_BG)
-    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    for idx, title in enumerate(headers, start=1):
-        cell = ws.cell(row=2, column=idx, value=title)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_align
-        cell.border = thin_border('444444')
-    ws.row_dimensions[2].height = 34
-
-    # Комментарий к шапке «Срок распродажи (WB)» — объясняет, что это прогноз WB
-    sale_rate_header = ws.cell(row=2, column=14)
-    sale_rate_header.comment = Comment(
-        "Прогноз от WB: за сколько дней при текущей динамике спроса "
-        "распродастся текущий остаток.\n\n"
-        "Источник: поле saleRate в Stocks Report API. Это собственный "
-        "алгоритм WB (учитывает сезонность, тренды, дефицит), может "
-        "сильно отличаться от простого остаток/ср.продажи.\n\n"
-        "Показано справочно — в расчёте объёма не используется.",
-        "WB Analiz",
-    )
-    sale_rate_header.comment.width = 360
-    sale_rate_header.comment.height = 180
-
-    ws.freeze_panes = 'A3'
-
-    # ── Стили рамок и заливок ───────────────────────────────────────────
-    medium = Side(style='medium', color='000000')
-    thick_border = Border(left=medium, right=medium, top=medium, bottom=medium)
-    gap_fill = PatternFill('solid', fgColor='F2F2F2')
-    sep_fill = PatternFill('solid', fgColor='D9D9D9')
-    burning_fill = PatternFill('solid', fgColor='FFCCCC')
-    wh_font = Font(name='Arial', size=9, color='555555')
-    data_font = Font(name='Arial', size=10, color='1A1A2E')
-    data_border = thin_border()
-
-    # Толстая рамка для шапок «Баркод»/«Объём» (col 3, 4 и 9, 10)
-    for col in (3, 4, 9, 10):
-        ws.cell(row=2, column=col).border = thick_border
-
-    # ── Заполнение строк данных ──────────────────────────────────────────
-    for i, (_, r) in enumerate(df_refill.iterrows()):
-        row_num = i + 3  # данные с 3-й строки (1=баннер, 2=подзаголовки)
-        avg = float(r.get('avg_per_day') or 0)
-        nm_id = int(r['nm_id']) if r.get('nm_id') is not None else None
-        barcode = r.get('barcode', '') or ''
-        article = r.get('supplier_article', '') or ''
-
-        # ── Основной блок (1..7) ─────────────────────────────────────
-        # 1: Артикул (гиперссылка)
-        a_cell = ws.cell(row=row_num, column=1, value=article)
-        a_cell.font = data_font
-        a_cell.alignment = LEFT
-        a_cell.border = data_border
-        if article and nm_id is not None:
-            a_cell.hyperlink = WB_PRODUCT_URL.format(nm_id)
-            a_cell.font = HYPERLINK_FONT
-
-        # 3: Баркод
-        b_cell = ws.cell(row=row_num, column=3, value=barcode)
-        b_cell.font = data_font
-        b_cell.alignment = CENTER
-        b_cell.number_format = '@'
-        b_cell.border = thick_border
-
-        # 4: IF-формула на скрытые P/Q/R
-        formula = (
-            f"=IF(E{row_num}={d1},P{row_num},"
-            f"IF(E{row_num}={d2},Q{row_num},R{row_num}))"
-        )
-        d_cell = ws.cell(row=row_num, column=4, value=formula)
-        d_cell.font = data_font
-        d_cell.alignment = CENTER
-        d_cell.number_format = '0'
-        d_cell.border = thick_border
-
-        # 5: Срок (dropdown)
-        e_cell = ws.cell(row=row_num, column=5, value=default_days)
-        e_cell.font = data_font
-        e_cell.alignment = CENTER
-        e_cell.border = data_border
-        add_days_dropdown(ws, e_cell, refill_days)
-
-        # 6: Группа популярности (A/B/C/D) с заливкой фона
-        group = (r.get('product_group') or '').strip() if isinstance(r.get('product_group'), str) else (r.get('product_group') or '')
-        g_cell = ws.cell(row=row_num, column=6, value=group or '')
-        g_cell.font = Font(name='Arial', size=10, bold=True, color='1A1A2E')
-        g_cell.alignment = CENTER
-        g_cell.border = data_border
-        if group in GROUP_COLORS:
-            g_cell.fill = fill(GROUP_COLORS[group])
-
-        # 7: Остатки по складам (wrap)
-        wh_str = wh_compact_str(wh_index.get(nm_id, [])) if nm_id is not None else '—'
-        wh_cell = ws.cell(row=row_num, column=7, value=wh_str)
-        wh_cell.font = wh_font
-        wh_cell.alignment = WRAP_LEFT
-        wh_cell.border = data_border
-        raw_wh = wh_index.get(nm_id, []) if nm_id is not None else []
-        if raw_wh:
-            add_stock_comment(wh_cell, merge_wh_by_name(raw_wh))
-
-        # ── Блок «Предложение WB» (9..16) ────────────────────────────
-        avail = (r.get('availability') or '') if isinstance(r.get('availability'), str) else ''
-        miss = float(r.get('office_missing_days') or 0)
-        lost = float(r.get('lost_orders') or 0)
-        trend = float(r.get('trend_pct') or 0)
-        sale_rate = float(r.get('sale_rate_days') or 0)
-
-        smart_qty = calc_smart_refill_qty(
-            avg, default_days, reserve_pct, avail, miss, trend,
-        )
-
-        # 9: Баркод (зеркально col 3)
-        c = ws.cell(row=row_num, column=9, value=barcode)
-        c.font = data_font
-        c.alignment = CENTER
-        c.number_format = '@'
-        c.border = thick_border
-
-        # 10: Объём WB
-        c = ws.cell(row=row_num, column=10, value=smart_qty)
-        c.font = data_font
-        c.alignment = CENTER
-        c.number_format = '0'
-        c.border = thick_border
-
-        # 11: Оборотность
-        c = ws.cell(row=row_num, column=11, value=availability_ru(avail))
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-
-        # 12: Простой поставки
-        c = ws.cell(row=row_num, column=12, value=f'{miss:.0f} дн')
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-
-        # 13: Упущено заказов (+ красная подсветка).
-        # Проверяем округлённое значение: 0.3 → round=0 → '—' без заливки.
-        lost_rounded = round(lost)
-        c = ws.cell(row=row_num, column=13,
-                    value=lost_rounded if lost_rounded > 0 else '—')
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-        if lost_rounded > 0:
-            c.fill = burning_fill
-
-        # 14: Срок продаж (WB) — прогноз WB (saleRate)
-        sr_val = f'{int(max(0, sale_rate))} дн' if sale_rate > 0 else '—'
-        c = ws.cell(row=row_num, column=14, value=sr_val)
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-
-        # 15: Тренд — заливка фона по знаку (порог ±5% совпадает с trend_arrow)
-        c = ws.cell(row=row_num, column=15, value=trend_arrow(trend))
-        c.font = data_font
-        c.alignment = CENTER
-        c.border = data_border
-        if trend >= 5:
-            c.fill = PatternFill('solid', fgColor='C8E6C9')   # светло-зелёный
-        elif trend <= -5:
-            c.fill = PatternFill('solid', fgColor='FFCCBC')   # светло-оранжевый
-        else:
-            c.fill = PatternFill('solid', fgColor='EEEEEE')   # светло-серый
-
-        # ── Скрытые P/Q/R — предрассчитанные значения для IF ─────────
-        ws.cell(row=row_num, column=16, value=calc_refill_qty(avg, d1, reserve_pct))
-        ws.cell(row=row_num, column=17, value=calc_refill_qty(avg, d2, reserve_pct))
-        ws.cell(row=row_num, column=18, value=calc_refill_qty(avg, d3, reserve_pct))
-
-    # ── Заливка separator-колонки (col 8) в жёлтый (в цвет баннера WB) ──
-    last_data_row = len(df_refill) + 2
-    sep_yellow = PatternFill('solid', fgColor='FFE699')
-    for r in range(2, last_data_row + 1):
-        ws.cell(row=r, column=8).fill = sep_yellow
-
-    # ── Легенда под таблицей ────────────────────────────────────────────
-    last = last_data_row + 2
-    legend_lines = [
-        ('— Основной расчёт —', True),
-        (f'Расчёт avg × срок × (1 + {int(reserve_pct)}%/100); срок выбирается '
-         f'в колонке E: {d1} / {d2} / {d3} дней', False),
-        ('Объём в колонке D обновляется автоматически при смене срока', False),
-        ('', False),
-        ('— Предложение WB —', True),
-        (f'Умный расчёт с учётом WB-метрик (срок {d2} дней фиксированный):', False),
-        ('  · Оборотность: дефицитный → ×1.25, стабильный → ×1.05, '
-         'слабый → ×0.7, неликвид → 0 (не поставлять)', False),
-        ('  · Тренд продаж (главный фактор): clamp [−40%..+50%], '
-         'падающие товары → меньше базы, растущие → заметно больше', False),
-        ('  · Простой поставки (мин. вклад): >10д +5%, >5д +3%', False),
-        ('🔴 Красная подсветка «Упущено заказов» = товар терял продажи в дефицит', False),
-        ('Срок «Срок продаж (WB)» — справочный прогноз от WB (наведите курсор на шапку)', False),
-    ]
-    title_font = Font(name='Arial', size=9, bold=True, color='888888')
-    legend_font = Font(name='Arial', size=9, italic=True, color='888888')
-    for offset, (text, is_title) in enumerate(legend_lines):
-        cell = ws.cell(row=last + offset, column=1, value=text)
-        cell.font = title_font if is_title else legend_font
 
 
 def generate_report_from_data(

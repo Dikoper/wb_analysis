@@ -55,6 +55,18 @@ HYPERLINK_FONT = Font(name="Arial", size=10, color="1155CC", underline="single")
 INNER_THIN = Side(style="thin", color="CCCCCC")
 GROUP_THICK = Side(style="medium", color="888888")
 
+HEADER_FONT = Font(name="Arial", size=11, bold=True, color=HEADER_FG)
+HEADER_FILL = PatternFill("solid", fgColor=HEADER_BG)
+HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+BURNING_FILL = PatternFill("solid", fgColor="FFCCCC")
+BARCODE_FILL = PatternFill("solid", fgColor="F0F0F0")
+
+TREND_FILL_UP = PatternFill("solid", fgColor="C8E6C9")
+TREND_FILL_DOWN = PatternFill("solid", fgColor="FFCCBC")
+TREND_FILL_NEUTRAL = PatternFill("solid", fgColor="EEEEEE")
+TREND_THRESHOLD = 5
+
 # ── Вспомогательные стили ─────────────────────────────────────────────────────
 
 def thin_border(color="CCCCCC"):
@@ -64,6 +76,98 @@ def thin_border(color="CCCCCC"):
 
 def fill(hex_color):
     return PatternFill(fill_type="solid", fgColor=hex_color)
+
+
+def trend_fill(trend_pct: float) -> PatternFill:
+    if trend_pct >= TREND_THRESHOLD:
+        return TREND_FILL_UP
+    elif trend_pct <= -TREND_THRESHOLD:
+        return TREND_FILL_DOWN
+    return TREND_FILL_NEUTRAL
+
+
+def write_header_row(ws, row_num: int, headers: list, border_color: str = "444444"):
+    for idx, title in enumerate(headers, start=1):
+        cell = ws.cell(row=row_num, column=idx, value=title)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
+        cell.border = thin_border(border_color)
+
+
+def write_article_cell(ws, row_num: int, col: int, article: str, nm_id, border):
+    c = ws.cell(row=row_num, column=col, value=article)
+    c.font = DATA_FONT
+    c.alignment = LEFT
+    c.border = border
+    if article and nm_id is not None:
+        c.hyperlink = WB_PRODUCT_URL.format(nm_id)
+        c.font = HYPERLINK_FONT
+
+
+def write_barcode_cell(ws, row_num: int, col: int, barcode: str, border, bg_fill=None):
+    c = ws.cell(row=row_num, column=col, value=barcode)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.number_format = "@"
+    c.border = border
+    if bg_fill:
+        c.fill = bg_fill
+
+
+def write_lost_orders_cell(ws, row_num: int, col: int, lost: float, border, zero_value=None):
+    lost_rounded = round(lost)
+    c = ws.cell(row=row_num, column=col,
+                value=lost_rounded if lost_rounded > 0 else zero_value)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = border
+    if lost_rounded > 0:
+        c.fill = BURNING_FILL
+
+
+def write_wb_data_cells(
+    ws, row_num: int, start_col: int,
+    smart_qty, avail_str: str, miss: float, lost: float,
+    sale_rate: float, trend_str: str, trend_pct: float,
+    border_vol, border_data, lost_zero_value=None,
+):
+    col = start_col
+
+    c = ws.cell(row=row_num, column=col, value=smart_qty)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.number_format = "0"
+    c.border = border_vol
+    col += 1
+
+    c = ws.cell(row=row_num, column=col, value=avail_str)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = border_data
+    col += 1
+
+    c = ws.cell(row=row_num, column=col, value=f"{miss:.0f} \u0434\u043d")
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = border_data
+    col += 1
+
+    write_lost_orders_cell(ws, row_num, col, lost, border_data, zero_value=lost_zero_value)
+    col += 1
+
+    sr_val = f"{int(max(0, sale_rate))} \u0434\u043d" if sale_rate > 0 else "\u2014"
+    c = ws.cell(row=row_num, column=col, value=sr_val)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = border_data
+    col += 1
+
+    c = ws.cell(row=row_num, column=col, value=trend_str)
+    c.font = DATA_FONT
+    c.alignment = CENTER
+    c.border = border_data
+    c.fill = trend_fill(trend_pct)
 
 
 # ── Функции форматирования ────────────────────────────────────────────────────
@@ -78,18 +182,15 @@ def apply_header_style(ws, column_widths: dict, headers: list = None, row_height
         headers: если передан — записывает заголовки в строку 1
         row_height: высота строки шапки
     """
-    header_font = Font(name="Arial", size=11, bold=True, color=HEADER_FG)
-    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
     if headers:
         for col_idx, header in enumerate(headers, 1):
             ws.cell(row=1, column=col_idx, value=header)
 
     ws.row_dimensions[1].height = row_height
     for cell in ws[1]:
-        cell.font = header_font
-        cell.fill = fill(HEADER_BG)
-        cell.alignment = center
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
         cell.border = thin_border("444444")
 
     ws.freeze_panes = "A2"
