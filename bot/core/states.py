@@ -15,6 +15,7 @@ class MenuStates(StatesGroup):
     store_management = State()
     add_store_token = State()
     edit_store_name = State()
+    edit_store_token = State()
     set_report_time = State()
     set_days_threshold = State()
     set_group_thresholds = State()
